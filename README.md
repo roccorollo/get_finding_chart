@@ -8,44 +8,11 @@ The script supports **Pan-STARRS1**, **DESI Legacy Surveys**, **SkyMapper DR4**,
 
 Current release: **v1.9.7**.
 
-### New in v1.9.7
+### New in v1.9.*
 
-- Reordered the `--survey` help choices so the compact survey names are shown first, followed by the long/canonical names.
-- Added the short aliases `sm` = `skymapper`, `vik` = `viking`, and `aw` = `allwise`.
-
-
-### New in v1.9.6
-
-- Added **VISTA Hemisphere Survey (VHS)** as survey option `vhs`.
-- VHS images are retrieved as FITS cutouts from the **ESO Science Archive** using TAP discovery plus the SODA cutout service.
-- Supported VHS bands are `Y J H K`; `Ks` and `K_s` are accepted as aliases for `K`. The default VHS band is `K`.
-- VHS SODA cutouts are native archive cutouts rather than HiPS2FITS visualization products, so they may be retained with `--fits`.
-
-### New in v1.9.5
-
-- The plotted sky field now remains fixed to the requested square FOV even when a long slit extends beyond the image boundary.
-- Slit overlays are clipped at the finding-chart boundary and no longer contribute to Matplotlib autoscaling.
-
-### New in v1.9.4
-
-- The relative-geometry report now gives both the position angle from T to each secondary source and the equivalent opposite direction, 180 deg away.
-- Whenever at least one secondary source is supplied, the finding-chart figure includes a compact box with the projected `DeltaRA` and `DeltaDec` offsets for **s2 - T**. This box is shown even when additional sources (`s3`, `s4`, ...) are present. The same arcsec/arcmin formatting rule is used as in the terminal report.
-
-### New in v1.9.2
-
-- Reformatted the relative-geometry terminal report for readability, with a blank line before the section and a separate multi-line block for each secondary source.
-
-### New in v1.9.1
-
-- When secondary sources are supplied, the program now reports their angular separation from the main target **T**, projected RA and Dec offsets, and the position angle from T to each source.
-- Separations and coordinate offsets are shown in arcseconds, automatically switching to arcminutes when the absolute value exceeds 2 arcmin.
-- Position angles are measured **North through East**, matching the convention used by `--angle`.
-
-### New in v1.9.0
-
-- Added **SDSS DR9** (`sdss`), **GALEX GR6/7** (`galex`), **DES DR2** (`des`), and **VISTA VIKING** (`viking`) through CDS HiPS2FITS.
-- Replaced the previous **WISE All-Sky** option with **AllWISE** (`allwise`); the old `wise` survey option has been removed.
-- No additional Python dependencies are required.
+- Whenever at least one secondary source is supplied, the finding-chart figure includes a compact box with the projected DeltaRA and DeltaDec offsets for s2 - T.
+- When secondary sources are supplied, the program now reports their angular separation from the main target T, projected RA and Dec offsets, and the position angle from T to each source. Position angles are measured North through East..
+- Added SDSS DR9 (sdss), GALEX GR6/7 (galex), DES DR2 (des), and VISTA VIKING (viking) and VHS (vhs) through CDS HiPS2FITS. Replaced the previous WISE All-Sky option with AllWISE (allwise);
 
 ## Features
 
