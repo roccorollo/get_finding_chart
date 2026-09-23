@@ -1,0 +1,7 @@
+# Python >= 3.10
+numpy
+scipy
+matplotlib
+astropy
+astroquery
+requests
