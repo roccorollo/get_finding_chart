@@ -6,7 +6,10 @@ A command-line Python tool for downloading public survey images and producing an
 
 The script supports **Pan-STARRS1**, **DESI Legacy Surveys**, **SkyMapper DR4**, **SDSS DR9**, **GALEX GR6/7**, **DES DR2**, **VISTA VIKING**, **VISTA Hemisphere Survey (VHS)**, **DSS2**, **2MASS**, and **AllWISE**.
 
-Current release: **v1.9.7**.
+Current release: **v2.0.3**.
+
+### What's new in v2.0.*
+Added -F / --faint / --faint-source to automatically build acquisition charts for faint targets using nearby Gaia DR3 stars: Gaia candidates are searched within 90 arcsec, filtered by G_RP, propagated to a chosen epoch (default 2026.0), and ranked by distance from the target. The selected Gaia star becomes the chart center, while the science target remains T; the chart PA is automatically aligned with the Gaia star–target direction unless overridden with --angle.
 
 ### New in v1.9.*
 
