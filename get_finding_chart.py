@@ -14,7 +14,7 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "2.0.4"
+__version__ = "2.0.5"
 
 import argparse
 import csv
@@ -48,6 +48,7 @@ from astropy.visualization import (
     ZScaleInterval,
 )
 from astropy.wcs import WCS
+from astropy.wcs.utils import proj_plane_pixel_scales
 try:
     from astroquery.hips2fits import hips2fits
 except ImportError:  # Allow older astroquery installs to use the fallback backends.
@@ -565,12 +566,12 @@ def format_angular_offset(value_arcsec: float, *, signed: bool = False) -> str:
 
 
 def relative_geometry_values(
-    target: SkyCoord,
-    source: SkyCoord,
+    origin: SkyCoord,
+    destination: SkyCoord,
 ) -> tuple[float, float, float, float | None, float | None]:
-    """Return separation, projected offsets, PA, and the opposite PA."""
-    separation_arcsec = target.separation(source).arcsec
-    delta_ra, delta_dec = target.spherical_offsets_to(source)
+    """Return geometry for a move from origin to destination."""
+    separation_arcsec = origin.separation(destination).arcsec
+    delta_ra, delta_dec = origin.spherical_offsets_to(destination)
 
     if separation_arcsec < 1.0e-9:
         return (
@@ -581,7 +582,7 @@ def relative_geometry_values(
             None,
         )
 
-    pa_deg = float(target.position_angle(source).wrap_at(360.0 * u.deg).deg)
+    pa_deg = float(origin.position_angle(destination).wrap_at(360.0 * u.deg).deg)
     opposite_pa_deg = (pa_deg + 180.0) % 360.0
     return (
         separation_arcsec,
@@ -592,8 +593,22 @@ def relative_geometry_values(
     )
 
 
+def source_to_target_offset_text(
+    source: SkyCoord, target: SkyCoord, label: str
+) -> str:
+    """Format the chart's on-sky move from a source to T."""
+    _, delta_ra_arcsec, delta_dec_arcsec, _, _ = relative_geometry_values(
+        source, target
+    )
+    return (
+        f"{label} -> T offsets\n"
+        f"DeltaRA={format_angular_offset(delta_ra_arcsec, signed=True)}\n"
+        f"DeltaDec={format_angular_offset(delta_dec_arcsec, signed=True)}"
+    )
+
+
 def report_relative_geometry(coords_deg: list[tuple[float, float]]) -> None:
-    """Report separations, sky offsets, and position angles from the main target."""
+    """Report geometry for moves from secondary sources to the main target."""
     if len(coords_deg) <= 1:
         return
 
@@ -604,8 +619,8 @@ def report_relative_geometry(coords_deg: list[tuple[float, float]]) -> None:
     )
 
     print()
-    print("Relative geometry from T:")
-    print("  (Delta RA is the projected on-sky offset; +RA=east, +Dec=north.)")
+    print("Relative geometry to T:")
+    print("  (Offsets are from each source to T; +RA=east, +Dec=north.)")
     print()
 
     for idx, (ra, dec) in enumerate(coords_deg[1:], start=2):
@@ -616,7 +631,7 @@ def report_relative_geometry(coords_deg: list[tuple[float, float]]) -> None:
             delta_dec_arcsec,
             pa_deg,
             opposite_pa_deg,
-        ) = relative_geometry_values(target, source)
+        ) = relative_geometry_values(source, target)
 
         if pa_deg is None:
             pa_text = "undefined (coincident positions)"
@@ -632,7 +647,7 @@ def report_relative_geometry(coords_deg: list[tuple[float, float]]) -> None:
             f"    DeltaRA={format_angular_offset(delta_ra_arcsec, signed=True)}; "
             f"DeltaDec={format_angular_offset(delta_dec_arcsec, signed=True)};"
         )
-        print(f"    PA(T->s{idx})={pa_text}")
+        print(f"    PA(s{idx}->T)={pa_text}")
         print()
 
 
@@ -876,6 +891,7 @@ def report_gaia_candidates(
         print(f"  {len(candidates)} candidates found.{suffix}")
     else:
         print(f"  {len(candidates)} candidate(s) found.")
+    print("  (Offsets are from each Gaia star to T; +RA=east, +Dec=north.)")
     print()
 
     for index in shown_indices:
@@ -901,7 +917,7 @@ def report_gaia_candidates(
             delta_dec_arcsec,
             pa_deg,
             opposite_pa_deg,
-        ) = relative_geometry_values(target, candidate.coord)
+        ) = relative_geometry_values(candidate.coord, target)
 
         if pa_deg is None:
             pa_text = "undefined (coincident positions)"
@@ -913,7 +929,7 @@ def report_gaia_candidates(
             f"    DeltaRA={format_angular_offset(delta_ra_arcsec, signed=True)}; "
             f"DeltaDec={format_angular_offset(delta_dec_arcsec, signed=True)};"
         )
-        print(f"    PA(T->{label})={pa_text}")
+        print(f"    PA({label}->T)={pa_text}")
         print()
 
 
@@ -973,8 +989,8 @@ def format_pa_value(angle: float) -> str:
 
 
 def build_output_name(
-    ident: str,
-    survey: str,
+    name: str,
+    spec: SurveySpec,
     band: str,
     ra: float,
     dec: float,
@@ -983,17 +999,13 @@ def build_output_name(
     angle: float | None,
 ) -> Path:
     """Construct a descriptive output filename."""
-    spec = SURVEYS[survey]
-    safe_ident = re.sub(r"[^A-Za-z0-9_.-]+", "_", ident).strip("_") or "fc"
+    safe_ident = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "fc"
     safe_band = str(band).replace(" ", "").lower()
 
-    parts = [
-        safe_ident,
-        spec.tag,
-        safe_band,
-        format_coordinate_tag(ra, dec),
-        format_fov_tag(fov_arcmin),
-    ]
+    parts = [safe_ident, spec.tag]
+    if safe_band:
+        parts.append(safe_band)
+    parts.extend((format_coordinate_tag(ra, dec), format_fov_tag(fov_arcmin)))
     if angle is not None:
         parts.append(f"PA{format_pa_value(angle)}")
 
@@ -1605,6 +1617,22 @@ def retrieve_image(
 # -----------------------------------------------------------------------------
 
 
+def normalize_deprecated_pc_keywords(header: fits.Header) -> fits.Header:
+    """Convert legacy PC001001-style matrix keys before Astropy parses WCS."""
+    normalized = header.copy()
+    for keyword in list(normalized):
+        match = re.fullmatch(r"PC(\d{3})(\d{3})", keyword)
+        if match is None:
+            continue
+        standard_keyword = f"PC{int(match.group(1))}_{int(match.group(2))}"
+        if standard_keyword in normalized:
+            # Keep an explicitly supplied standard-form value if both exist.
+            del normalized[keyword]
+        else:
+            normalized.rename_keyword(keyword, standard_keyword)
+    return normalized
+
+
 def read_fits_image(path: Path) -> tuple[np.ndarray, WCS]:
     """Read the first numeric 2-D image with a celestial WCS."""
     with fits.open(path, memmap=False) as hdul:
@@ -1623,13 +1651,27 @@ def read_fits_image(path: Path) -> tuple[np.ndarray, WCS]:
             if data.ndim != 2:
                 continue
 
-            full_wcs = WCS(hdu.header)
+            full_wcs = WCS(normalize_deprecated_pc_keywords(hdu.header))
             if not full_wcs.has_celestial:
                 continue
 
             return data, full_wcs.celestial
 
-    raise RuntimeError("The downloaded FITS file contains no usable 2-D image/WCS.")
+    raise RuntimeError("The FITS file contains no usable 2-D image/WCS.")
+
+
+def image_pixel_scale_arcsec(wcs: WCS) -> float:
+    """Return the geometric-mean celestial pixel scale of a FITS image."""
+    scales = proj_plane_pixel_scales(wcs.celestial)
+    axis_units = wcs.celestial.wcs.cunit
+    arcsec_scales = [
+        (float(scale) * u.Unit(unit)).to_value(u.arcsec)
+        for scale, unit in zip(scales, axis_units)
+    ]
+    pixel_scale = float(np.sqrt(np.prod(arcsec_scales)))
+    if not np.isfinite(pixel_scale) or pixel_scale <= 0:
+        raise ValueError("FITS image has no valid celestial pixel scale.")
+    return pixel_scale
 
 
 def assess_array_coverage(data: np.ndarray) -> CoverageInfo:
@@ -1815,7 +1857,7 @@ def compute_intensity_limits(
 ) -> tuple[float, float]:
     """Determine robust display limits."""
     if finite.size == 0:
-        raise RuntimeError("The downloaded image contains no finite pixel values.")
+        raise RuntimeError("The image has no finite pixels in the requested field.")
 
     stride = max(1, finite.size // MAX_SCALING_SAMPLE)
     sample = finite[::stride]
@@ -2306,7 +2348,7 @@ def make_finding_chart(
     marker_sizes: list[float],
     fov_arcmin: float,
     pixel_scale_arcsec: float,
-    survey: str,
+    survey_label: str,
     band: str,
     angle: float | None,
     slit_width_arcsec: float,
@@ -2409,25 +2451,19 @@ def make_finding_chart(
         )
     add_compass(ax, wcs, center_coord, nx, ny, fov_arcmin)
 
-    # In faint-source mode the compact geometry box refers to the selected
-    # Gaia acquisition star. Otherwise preserve the v1 behavior (s2 - T).
+    # Show the move from the selected Gaia star, or s2, to T.
     offset_source = None
     offset_label = None
     if acquisition_coord is not None and acquisition_label is not None:
         offset_source = acquisition_coord
-        offset_label = f"{acquisition_label} - T"
+        offset_label = acquisition_label
     elif len(skycoords) >= 2:
         offset_source = skycoords[1]
-        offset_label = "s2 - T"
+        offset_label = "s2"
 
     if offset_source is not None and offset_label is not None:
-        _, delta_ra_arcsec, delta_dec_arcsec, _, _ = relative_geometry_values(
-            target, offset_source
-        )
-        offset_text = (
-            f"{offset_label} offsets\n"
-            f"DeltaRA={format_angular_offset(delta_ra_arcsec, signed=True)}\n"
-            f"DeltaDec={format_angular_offset(delta_dec_arcsec, signed=True)}"
+        offset_text = source_to_target_offset_text(
+            offset_source, target, offset_label
         )
         ax.text(
             0.02,
@@ -2446,11 +2482,12 @@ def make_finding_chart(
     ax.coords[1].set_axislabel("Dec (J2000)")
     ax.coords.grid(color="0.65", linestyle=":", linewidth=0.6, alpha=0.65)
 
-    spec = SURVEYS[survey]
-    field_heading = (
-        f"{spec.label}  |  band {band}  |  "
-        f"{fov_arcmin:g}x{fov_arcmin:g} arcmin"
-    )
+    field_heading = f"{survey_label}  |  {fov_arcmin:g}x{fov_arcmin:g} arcmin"
+    if band:
+        field_heading = (
+            f"{survey_label}  |  band {band}  |  "
+            f"{fov_arcmin:g}x{fov_arcmin:g} arcmin"
+        )
     if angle is not None:
         pa_text = f"{angle:.1f}".rstrip("0").rstrip(".")
         field_heading += f"  |  PA {pa_text} deg"
@@ -2499,7 +2536,8 @@ def make_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
   %(prog)s -c 17:05:35.520 -23:27:21.60
-  %(prog)s -c 256.398 -23.456 -f 5 -i target1 -s skymapper
+  %(prog)s -c 256.398 -23.456 -f 5 -n target1 -s skymapper
+  %(prog)s -c 256.398 -23.456 -i local_image.fits -n target1
   %(prog)s -c 256.398 -23.456 -f 10 -s allwise -b w1
   %(prog)s -c 256.398 -23.456 -f 6 -s vhs -b K
   %(prog)s -c 17:05:35.520 -23:27:21.60 -f 5 -a 45 -m slit --slit-length 180 --slit-width 0.8
@@ -2532,10 +2570,17 @@ Examples:
         help=f"Square field side in arcminutes (default: {DEFAULT_FOV_ARCMIN:g}).",
     )
     basic.add_argument(
-        "-i",
-        "--id",
+        "-n",
+        "--name",
         default="fc",
-        help="Identifier/prefix for the output filename (default: fc).",
+        help="Name/prefix for the output filename (default: fc).",
+    )
+    basic.add_argument(
+        "-i",
+        "--image",
+        metavar="FILENAME",
+        default=None,
+        help="Use a local FITS image with celestial WCS instead of downloading a survey image.",
     )
 
     survey_group = parser.add_argument_group("Survey options")
@@ -2543,12 +2588,12 @@ Examples:
         "-s",
         "--survey",
         choices=SURVEY_CHOICES,
-        default="ps1",
+        default=None,
         help="Survey to use (default: ps1).",
     )
     survey_group.add_argument(
         "--legacy-layer",
-        default="ls-dr10",
+        default=None,
         help="Legacy Survey viewer layer; used only with -s legacy (default: ls-dr10).",
     )
     survey_group.add_argument(
@@ -2746,9 +2791,26 @@ def main() -> int:
     if faint_selection is not None and args.marker is None:
         markers[0] = "slit"
 
-    survey = canonical_survey(args.survey)
-    spec = SURVEYS[survey]
-    band = args.band if args.band is not None else spec.default_band
+    image_path = Path(args.image).expanduser() if args.image is not None else None
+    if image_path is not None:
+        if args.fits is not None:
+            parser.error("--fits saves a downloaded image and cannot be used with --image.")
+        if args.survey is not None or args.band is not None or args.legacy_layer is not None:
+            parser.error("--survey, --band, and --legacy-layer cannot be used with --image.")
+        if not image_path.is_file():
+            parser.error(f"FITS image does not exist: {image_path}")
+        try:
+            _, image_wcs = read_fits_image(image_path)
+            pixel_scale = image_pixel_scale_arcsec(image_wcs)
+        except Exception as exc:
+            parser.error(f"Cannot use FITS image {image_path}: {exc}")
+        survey = "image"
+        spec = SurveySpec("User FITS image", "image", "", pixel_scale)
+        band = ""
+    else:
+        survey = canonical_survey(args.survey or "ps1")
+        spec = SURVEYS[survey]
+        band = args.band if args.band is not None else spec.default_band
     user_angle = normalize_pa(args.angle) if args.angle is not None else None
 
     if not 0.0 <= args.low < args.high <= 100.0:
@@ -2824,8 +2886,7 @@ def main() -> int:
     angle = user_angle if user_angle is not None else automatic_pa
     display_pa = 0.0 if angle is None else angle
 
-    # Every chart is reprojected to a controlled final orientation. A square
-    # input therefore needs up to sqrt(2) extra coverage to avoid blank corners.
+    # Downloaded square images need extra coverage for PA reprojection.
     download_fov = fov_arcmin * np.sqrt(2.0)
     download_side = fov_to_pixels(download_fov, spec.pixel_scale)
     output_side = fov_to_pixels(fov_arcmin, spec.pixel_scale)
@@ -2855,8 +2916,8 @@ def main() -> int:
             )
 
     output = build_output_name(
-        args.id,
-        survey,
+        args.name,
+        spec,
         band,
         ra_main,
         dec_main,
@@ -2887,13 +2948,18 @@ def main() -> int:
     print(f"Markers: {' '.join(markers)}")
     print(f"Colors: {' '.join(colors)}")
     print("Marker sizes: " + " ".join(f"{size:g}" for size in marker_sizes))
-    print(f"Survey: {spec.label}; band: {band}")
+    if image_path is not None:
+        print(f"Input FITS image: {image_path}")
+        print(f"Input pixel scale: {spec.pixel_scale:.4g} arcsec/pixel")
+    else:
+        print(f"Survey: {spec.label}; band: {band}")
     print(f"FOV: {fov_arcmin:g} x {fov_arcmin:g} arcmin")
     print(f"Output sampling: {output_side} x {output_side} pixels")
-    print(
-        f"Survey download: {download_fov:.4g} arcmin, "
-        f"{download_side} x {download_side} pixels"
-    )
+    if image_path is None:
+        print(
+            f"Survey download: {download_fov:.4g} arcmin, "
+            f"{download_side} x {download_side} pixels"
+        )
     if angle is not None:
         print(f"Position angle: {angle:g} deg (North through East; PA points up)")
     else:
@@ -2912,22 +2978,24 @@ def main() -> int:
 
     try:
         with tempfile.TemporaryDirectory(prefix="finding_chart_") as tmpdir:
-            fits_path = Path(tmpdir) / "survey_cutout.fits"
-
-            retrieval = retrieve_image(
-                survey,
-                center_coord.ra.deg,
-                center_coord.dec.deg,
-                download_side,
-                download_fov,
-                fov_arcmin,
-                spec.pixel_scale,
-                display_pa,
-                band,
-                fits_path,
-                args.legacy_layer,
-            )
-            print(f"Retrieval backend: {retrieval.backend}")
+            fits_path = image_path
+            retrieval = None
+            if fits_path is None:
+                fits_path = Path(tmpdir) / "survey_cutout.fits"
+                retrieval = retrieve_image(
+                    survey,
+                    center_coord.ra.deg,
+                    center_coord.dec.deg,
+                    download_side,
+                    download_fov,
+                    fov_arcmin,
+                    spec.pixel_scale,
+                    display_pa,
+                    band,
+                    fits_path,
+                    args.legacy_layer or "ls-dr10",
+                )
+                print(f"Retrieval backend: {retrieval.backend}")
 
             acquisition_coord_deg = (
                 (selected_gaia.coord.ra.deg, selected_gaia.coord.dec.deg)
@@ -2946,7 +3014,7 @@ def main() -> int:
                 marker_sizes,
                 fov_arcmin,
                 spec.pixel_scale,
-                survey,
+                spec.label,
                 band,
                 angle,
                 args.slit_width,
@@ -2960,7 +3028,8 @@ def main() -> int:
                 args.invert,
             )
 
-            save_requested_fits(fits_path, args.fits, retrieval)
+            if retrieval is not None:
+                save_requested_fits(fits_path, args.fits, retrieval)
 
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

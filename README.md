@@ -2,7 +2,7 @@
 
 Command-line Python tool for downloading public survey images and creating annotated astronomical finding charts with WCS coordinates, source markers, optional slit overlays, controlled position angle, configurable image scaling, and Gaia-assisted acquisition for faint targets.
 
-Current release: **v2.0.4**.
+Current release: **v2.0.5**.
 
 ## Author
 
@@ -16,6 +16,7 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
 ## Features
 
 - Retrieve imaging from **Pan-STARRS1, DESI Legacy Survey DR10, SkyMapper DR4, SDSS DR9, GALEX GR6/7, DES DR2, VISTA VIKING, VISTA Hemisphere Survey (VHS), DSS2, 2MASS, and AllWISE**.
+- Use a local FITS image with celestial WCS through `-i/--image`.
 - Accept decimal or sexagesimal RA/Dec coordinates and plot up to **10 sources**.
 - Default **4 x 4 arcmin** field, with arbitrary square FOVs through `-f/--fov`.
 - Controlled chart orientation: North up / East left by default, or any PA with `-a/--angle`.
@@ -24,8 +25,8 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
 - North/East compass is always drawn in **dark green**, independently of the source-marker palette.
 - Configurable slit length, width, marker size, and per-source colors.
 - Long slits are clipped to the requested square FOV and do not change the plot size.
-- Relative geometry for secondary sources: separation, projected `DeltaRA`, `DeltaDec`, PA, and opposite PA.
-- Compact `s2 - T` offset box in normal mode.
+- Relative geometry from each secondary source to T: separation, projected `DeltaRA`, `DeltaDec`, PA, and opposite PA.
+- Compact `s2 -> T` offset box in normal mode.
 - **Faint-source acquisition mode** using Gaia DR3:
   - `-F`, `--faint`, or `--faint-source`;
   - searches within **90 arcsec** of T;
@@ -38,10 +39,10 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
   - optional custom `G_RP` range with `--faint MAG_MIN MAG_MAX` or `--faint N MAG_MIN MAG_MAX`;
   - `--epoch YEAR` changes the proper-motion epoch;
   - terminal output lists up to the five closest Gaia candidates, plus the selected star when needed;
-  - only the selected acquisition star is plotted, with a `GN - T` offset box.
+  - only the selected acquisition star is plotted, with a `GN -> T` offset box.
 - Intensity scaling with `auto`, `zscale`, or percentile limits and `asinh`, linear, square-root, or logarithmic stretches.
 - `--invert` for a dark-background grayscale display.
-- Output to PNG, PDF, JPG, or EPS.
+- Set the output filename prefix with `-n/--name`; output to PNG, PDF, JPG, or EPS.
 - Optional saving of suitable downloaded FITS cutouts with `--fits`.
 
 ## Requirements
@@ -54,7 +55,7 @@ Install dependencies with:
 python3 -m pip install -r requirements.txt
 ```
 
-The program requires internet access to query survey services and Gaia DR3.
+Survey downloads and faint-source Gaia queries require internet access. A local FITS chart without `--faint` works offline.
 
 ## Installation
 
@@ -106,6 +107,16 @@ python3 get_finding_chart.py \
        17:05:36.100 -23:27:10.00 \
        17:05:34.800 -23:27:40.00
 ```
+
+Use your own FITS image:
+
+```bash
+python3 get_finding_chart.py \
+    -c 17:05:35.520 -23:27:21.60 \
+    -i field.fits -n mytarget
+```
+
+The FITS image must have a usable two-dimensional celestial WCS and cover the requested field. The chart uses the image's pixel scale and still centers and orients the output according to `-c`, `-f`, and `-a`.
 
 The first source is labelled **T**; additional sources are `s2`, `s3`, etc.
 
@@ -169,7 +180,7 @@ Set another PA with:
 -a 45
 ```
 
-PA is measured North through East. When multiple sources are supplied, the terminal reports their separation, projected RA/Dec offsets, PA, and opposite PA relative to T. Angular values are shown in arcsec and switch to arcmin above 120 arcsec.
+PA is measured North through East. When multiple sources are supplied, the terminal reports the separation, projected RA/Dec offsets, PA, and opposite PA for a move from each source to T. The chart's offset box also gives the move from `s2` to T, or from the selected Gaia star to T in faint-source mode. Positive `DeltaRA` means east and positive `DeltaDec` means north. Angular values are shown in arcsec and switch to arcmin above 120 arcsec.
 
 ## Faint-source acquisition mode
 
@@ -239,7 +250,7 @@ Default output is PNG. Other formats:
 -e eps
 ```
 
-Use `-i/--id` to set the output filename prefix.
+Use `-n/--name` to set the output filename prefix. Use `-i/--image` to provide a local FITS input instead of downloading survey imaging. With `--image`, do not use survey selection options (`-s/--survey`, `-b/--band`, or `--legacy-layer`) or `--fits`.
 
 Use:
 
