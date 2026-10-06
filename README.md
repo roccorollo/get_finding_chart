@@ -1,60 +1,70 @@
-# get_finding_chart
-
 # Astronomical Finding Chart Generator
 
-A command-line Python tool for downloading public survey images and producing annotated astronomical finding charts with WCS coordinates, source markers, optional slit overlays, controlled sky orientation, and configurable image scaling.
+Command-line Python tool for downloading public survey images and creating annotated astronomical finding charts with WCS coordinates, source markers, optional slit overlays, controlled position angle, configurable image scaling, and Gaia-assisted acquisition for faint targets.
 
-The script supports **Pan-STARRS1**, **DESI Legacy Surveys**, **SkyMapper DR4**, **SDSS DR9**, **GALEX GR6/7**, **DES DR2**, **VISTA VIKING**, **VISTA Hemisphere Survey (VHS)**, **DSS2**, **2MASS**, and **AllWISE**.
+Current release: **v2.0.4**.
 
-Current release: **v2.0.3**.
+## Author
 
-### What's new in v2.0.*
-Added -F / --faint / --faint-source to automatically build acquisition charts for faint targets using nearby Gaia DR3 stars: Gaia candidates are searched within 90 arcsec, filtered by G_RP, propagated to a chosen epoch (default 2026.0), and ranked by distance from the target. The selected Gaia star becomes the chart center, while the science target remains T; the chart PA is automatically aligned with the Gaia star–target direction unless overridden with --angle.
+**Andrea Rossi**  
+Development assistance: OpenAI ChatGPT.
 
-### New in v1.9.*
+## License
 
-- Whenever at least one secondary source is supplied, the finding-chart figure includes a compact box with the projected DeltaRA and DeltaDec offsets for s2 - T.
-- When secondary sources are supplied, the program now reports their angular separation from the main target T, projected RA and Dec offsets, and the position angle from T to each source. Position angles are measured North through East..
-- Added SDSS DR9 (sdss), GALEX GR6/7 (galex), DES DR2 (des), and VISTA VIKING (viking) and VHS (vhs) through CDS HiPS2FITS. Replaced the previous WISE All-Sky option with AllWISE (allwise);
+Released under the **MIT License**. See [LICENSE](LICENSE).
 
 ## Features
 
-- Retrieve survey imaging from public services. Pan-STARRS1 and 2MASS prefer their standard backends and automatically fall back to CDS HiPS2FITS when needed; SDSS, GALEX, DES, VIKING, and AllWISE are retrieved directly through CDS HiPS2FITS; VHS is retrieved from the ESO Science Archive through TAP + SODA.
-- Default field size of **4 x 4 arcmin**, with arbitrary square fields via `-f/--fov`.
-- Accept sexagesimal or decimal RA/Dec coordinates.
-- Plot up to **10 sources** in one chart.
-- Per-source markers: `cross`, `circle`, `diamond`, `x`, or `slit`.
-- Configurable marker colors and sizes.
-- Configurable longslit length and width, with a circle marking the exact slit center.
-- Use a controlled final orientation for every chart: PA = 0 deg (North up, East left) by default, or a requested position angle measured North through East.
-- WCS RA/Dec axes, coordinate grid, and North/East compass.
-- `auto`, `zscale`, and percentile intensity scaling.
-- `asinh`, linear, square-root, and logarithmic stretches.
+- Retrieve imaging from **Pan-STARRS1, DESI Legacy Survey DR10, SkyMapper DR4, SDSS DR9, GALEX GR6/7, DES DR2, VISTA VIKING, VISTA Hemisphere Survey (VHS), DSS2, 2MASS, and AllWISE**.
+- Accept decimal or sexagesimal RA/Dec coordinates and plot up to **10 sources**.
+- Default **4 x 4 arcmin** field, with arbitrary square FOVs through `-f/--fov`.
+- Controlled chart orientation: North up / East left by default, or any PA with `-a/--angle`.
+- Source markers: `x`, `cross`, `circle`, `diamond`, and `slit`.
+- Default marker colors use a **color-blind-friendly Okabe-Ito palette**; `--color` overrides the defaults.
+- North/East compass is always drawn in **dark green**, independently of the source-marker palette.
+- Configurable slit length, width, marker size, and per-source colors.
+- Long slits are clipped to the requested square FOV and do not change the plot size.
+- Relative geometry for secondary sources: separation, projected `DeltaRA`, `DeltaDec`, PA, and opposite PA.
+- Compact `s2 - T` offset box in normal mode.
+- **Faint-source acquisition mode** using Gaia DR3:
+  - `-F`, `--faint`, or `--faint-source`;
+  - searches within **90 arcsec** of T;
+  - default selection `G_RP < 19`;
+  - Gaia positions propagated to epoch **2026.0** by default;
+  - selected Gaia star becomes the chart center;
+  - T defaults to a slit marker unless explicitly overridden;
+  - automatic PA aligns the selected Gaia acquisition star with T;
+  - `--faint N` selects the Nth closest suitable star;
+  - optional custom `G_RP` range with `--faint MAG_MIN MAG_MAX` or `--faint N MAG_MIN MAG_MAX`;
+  - `--epoch YEAR` changes the proper-motion epoch;
+  - terminal output lists up to the five closest Gaia candidates, plus the selected star when needed;
+  - only the selected acquisition star is plotted, with a `GN - T` offset box.
+- Intensity scaling with `auto`, `zscale`, or percentile limits and `asinh`, linear, square-root, or logarithmic stretches.
+- `--invert` for a dark-background grayscale display.
 - Output to PNG, PDF, JPG, or EPS.
-- Optionally keep downloaded FITS files from the normal survey backends with `--fits`; HiPS2FITS visualization products are intentionally not saved. Native ESO VHS SODA cutouts can be saved.
-- Compact source information in the chart title, automatically limited to two lines.
+- Optional saving of suitable downloaded FITS cutouts with `--fits`.
 
 ## Requirements
 
-Python **3.10 or newer** is required.
+Python **3.10 or newer**.
 
-Install the required packages with:
+Install dependencies with:
 
 ```bash
-python3 -m pip install numpy scipy matplotlib astropy astroquery requests
+python3 -m pip install -r requirements.txt
 ```
 
-The program also requires internet access to retrieve survey images.
+The program requires internet access to query survey services and Gaia DR3.
 
 ## Installation
 
-Clone or download the repository, then make the script executable if desired:
+Clone or download the repository. Optionally make the script executable:
 
 ```bash
 chmod +x get_finding_chart.py
 ```
 
-You can then run it as either:
+Run with:
 
 ```bash
 python3 get_finding_chart.py [options]
@@ -66,45 +76,29 @@ or:
 ./get_finding_chart.py [options]
 ```
 
-## Quick start
-
-Only coordinates are required. The default is a **4 x 4 arcmin Pan-STARRS1 r-band** chart, displayed with **North up and East left**:
-
-```bash
-python3 get_finding_chart.py -c 17:05:35.520 -23:27:21.60
-```
-
-A different field size can be requested with `-f`:
-
-```bash
-python3 get_finding_chart.py \
-    -c 17:05:35.520 -23:27:21.60 \
-    -f 6
-```
-
-Run:
+For all options:
 
 ```bash
 python3 get_finding_chart.py --help
 ```
 
-for the complete command-line help.
+## Quick start
 
-## Coordinates and multiple sources
-
-Coordinates may be given in sexagesimal form:
+Default Pan-STARRS1 r-band chart:
 
 ```bash
--c 17:05:35.520 -23:27:21.60
+python3 get_finding_chart.py -c 17:05:35.520 -23:27:21.60
 ```
 
-or decimal degrees:
+Different field size and survey:
 
 ```bash
--c 256.398 -23.456
+python3 get_finding_chart.py \
+    -c 17:05:35.520 -23:27:21.60 \
+    -f 6 -s legacy -b r
 ```
 
-Additional RA/Dec pairs can be appended to the same `-c` option:
+Multiple sources:
 
 ```bash
 python3 get_finding_chart.py \
@@ -113,242 +107,106 @@ python3 get_finding_chart.py \
        17:05:34.800 -23:27:40.00
 ```
 
-The first position is labelled **T**. Additional positions are labelled **s2**, **s3**, and so on. Up to 10 sources are supported.
-
-Negative declinations can be supplied normally; they do not need special quoting.
+The first source is labelled **T**; additional sources are `s2`, `s3`, etc.
 
 ## Surveys and bands
 
-| Survey option | Survey | Supported bands | Default |
+| Option | Survey | Bands | Default |
 |---|---|---|---|
 | `ps1` | Pan-STARRS1 | `g r i z y` | `r` |
-| `legacy` | DESI Legacy Survey DR10 | `g r i z` | `r` |
-| `skymapper` | SkyMapper DR4 | `u v g r i z` | `r` |
+| `legacy` / `ls` | DESI Legacy Survey DR10 | `g r i z` | `r` |
+| `skymapper` / `sm` | SkyMapper DR4 | `u v g r i z` | `r` |
 | `sdss` | SDSS DR9 | `u g r i z` | `r` |
 | `galex` | GALEX GR6/7 | `FUV NUV` | `NUV` |
 | `des` | DES DR2 | `g r i z Y` | `r` |
-| `viking` | VISTA VIKING | `z Y J H K` | `K` |
-| `vhs` | VISTA Hemisphere Survey (VHS) | `Y J H K` (`Ks`, `K_s` aliases) | `K` |
-| `dss2` | DSS2 | `red/r`, `blue/b`, `ir/i` | `red` |
+| `viking` / `vik` | VISTA VIKING | `z Y J H K` | `K` |
+| `vhs` | VISTA Hemisphere Survey | `Y J H K` | `K` |
+| `dss2` | DSS2 | `red/r blue/b ir/i` | `red` |
 | `2mass` | 2MASS | `J H K` | `J` |
-| `allwise` | AllWISE | `w1 w2 w3 w4` | `w1` |
+| `allwise` / `aw` | AllWISE | `w1 w2 w3 w4` | `w1` |
 
-Short survey aliases are `ls` = `legacy`, `sm` = `skymapper`, `vik` = `viking`, and `aw` = `allwise`. `panstarrs` is also accepted as an alias for `ps1`.
+`panstarrs` is also accepted as an alias for `ps1`. VIKING and VHS accept `Ks` / `K_s` as aliases for `K` where applicable. AllWISE also accepts `1`, `2`, `3`, `4` and the approximate wavelengths `3.4`, `4.6`, `12`, `22`.
 
-AllWISE also accepts the aliases `1`, `2`, `3`, `4`, or the approximate wavelengths `3.4`, `4.6`, `12`, and `22`. VIKING accepts `Ks`/`K_s` as aliases for `K`.
+Pan-STARRS1 and 2MASS prefer their standard backends and can fall back to CDS HiPS2FITS when coverage is inadequate. SDSS, GALEX, DES, VIKING, and AllWISE use CDS HiPS2FITS directly. VHS is retrieved from the ESO Science Archive via TAP + SODA.
 
-Example:
+## Markers, colors, and slit
 
-```bash
-python3 get_finding_chart.py \
-    -c 256.398 -23.456 \
-    -s allwise -b w1 -f 8
-
-python3 get_finding_chart.py \
-    -c 256.398 -23.456 \
-    -s vhs -b K -f 6
-```
-
-For the Legacy Survey, a different viewer layer can be selected with `--legacy-layer`.
-
-For VHS, `K`, `Ks`, and `K_s` all select the ESO `Ks` filter. Availability of `Y` and `H` depends on the VHS sub-survey footprint; `J` and `Ks` provide the broadest VHS coverage.
-
-> **SkyMapper note:** the SkyMapper service restricts individual cutouts to less than 10 arcmin on a side. Because every chart is reprojected to a controlled orientation, the input square is enlarged by a factor of `sqrt(2)` to avoid blank corners. The requested SkyMapper finding-chart field must therefore be smaller than about **7.07 arcmin** on a side.
-
-## Image retrieval backends
-
-The program uses different retrieval services for different surveys. Pan-STARRS1 and 2MASS keep the **preferred-backend first, HiPS2FITS only when needed** strategy. SDSS, GALEX, DES, VIKING, and AllWISE use CDS HiPS2FITS directly, while VHS uses the ESO Science Archive TAP + SODA services.
-
-- **Pan-STARRS1:** the STScI Pan-STARRS cutout service is tried first. The returned FITS is checked over the field that will actually appear in the finding chart. If the preferred image fails to download or contains a substantial edge-connected/central region of non-finite pixels, the program retries with CDS **HiPS2FITS** using the Pan-STARRS DR1 HiPS for the requested band.
-- **2MASS:** NASA SkyView is tried first. The final displayed field is checked in the same way; CDS **HiPS2FITS** is used only when the SkyView image fails or has inadequate coverage.
-- **SDSS DR9, GALEX GR6/7, DES DR2, VISTA VIKING, and AllWISE:** CDS **HiPS2FITS** is the primary retrieval backend.
-- **Legacy Survey:** the DESI Legacy Survey FITS cutout service is used directly.
-- **DSS2:** NASA SkyView is used.
-- **SkyMapper:** the SkyMapper DR4 SIAP service is used.
-- **VHS:** the ESO Science Archive is queried through TAP and the selected public product is clipped with the ESO SODA service.
-
-### Automatic coverage check for Pan-STARRS1 and 2MASS
-
-The coverage test is deliberately applied to the **final chart field**, not simply to the larger downloaded input image. This avoids switching to HiPS merely because an enlarged cutout contains NaNs outside the region that will be displayed.
-
-The current fallback criteria are conservative:
-
-- more than **1%** of the final field consists of non-finite pixels connected to an image border; or
-- more than **50%** of the small central test region is non-finite.
-
-Isolated internal NaNs do not trigger the fallback. The program prints a diagnostic such as:
-
-```text
-STScI Pan-STARRS final-field coverage: 99.73% finite; edge-connected missing=0.27%; center missing=0.00%
-```
-
-If the preferred image is incomplete and HiPS2FITS also fails, the program keeps the usable-but-incomplete preferred image and prints a warning rather than failing the entire finding-chart request.
-
-HiPS2FITS is useful near boundaries between individual survey images because the HiPS representation combines survey imaging into a hierarchical sky map before generating the requested cutout. These outputs are resampled visualization/cutout products and should not be treated as the preferred source for calibrated survey photometry when standard survey products are available.
-
-## Relative source geometry
-
-When more than one source is supplied with `-c/--coordinates`, the program prints a compact geometry summary near the end of the run, after any retrieval/output warnings. The first coordinate is the main target **T**; all additional sources are measured relative to it.
-
-For each secondary source the report gives:
-
-- total angular separation from T;
-- projected on-sky RA offset (`DeltaRA`, positive toward East);
-- Dec offset (`DeltaDec`, positive toward North);
-- position angle `PA(T->sN)` in degrees, measured North through East;
-- the equivalent opposite PA, 180 deg away, useful because a slit can be described in either direction along the same axis.
-
-Angular values are reported in arcseconds unless their absolute value is greater than 2 arcmin, in which case arcminutes are used. `DeltaRA` is the projected on-sky longitudinal offset rather than the raw numerical difference in RA coordinates. The reported PA can be used directly with `--angle` to orient the chart/slit along the line joining T and the secondary source. The opposite PA is `(PA + 180) mod 360` and describes the same slit axis in the reverse direction. Whenever at least one secondary source is supplied, the `DeltaRA` and `DeltaDec` offsets for **s2 - T** are also shown in a small box inside the finding-chart figure, even if additional sources are present.
-
-Example terminal output:
-
-```text
-Relative geometry from T:
-  (Delta RA is the projected on-sky offset; +RA=east, +Dec=north.)
-
-s2:
-    separation=37.42 arcsec;
-    DeltaRA=+31.08 arcsec; DeltaDec=-20.85 arcsec;
-    PA(T->s2)=123.86 deg; opposite PA=303.86 deg
-
-s3:
-    separation=1.35 arcmin;
-    DeltaRA=-42.70 arcsec; DeltaDec=+1.15 arcmin;
-    PA(T->s3)=328.19 deg; opposite PA=148.19 deg
-```
-
-## Markers
-
-Choose markers with `-m/--marker`:
+Choose one marker per source if desired:
 
 ```bash
--m cross slit circle
+-m x slit circle
 ```
 
-The marker list follows the same order as the coordinate pairs. For example:
+Missing markers default to `x`.
 
-```bash
-python3 get_finding_chart.py \
-    -c 17:05:35.520 -23:27:21.60 \
-       17:05:36.100 -23:27:10.00 \
-       17:05:34.800 -23:27:40.00 \
-    -m cross slit circle
-```
-
-means:
-
-- `T` -> cross
-- `s2` -> slit
-- `s3` -> circle
-
-If fewer markers than sources are given, the remaining sources default to `cross`.
-
-Available markers are:
-
-```text
-cross  circle  diamond  x  slit
-```
-
-### Marker colors
-
-Use one color for all sources:
+Override default colors with one color for all sources:
 
 ```bash
 --color orange
 ```
 
-or give one color per source:
+or one color per source:
 
 ```bash
---color red blue orange
+--color '#D55E00' '#0072B2' '#009E73'
 ```
 
-Matplotlib color names and color specifications are accepted. Shell-sensitive values such as hexadecimal colors should be quoted, for example:
-
-```bash
---color '#ff0000' '#00a0ff'
-```
-
-Without `--color`, the main target is red and secondary sources are blue.
-
-### Marker sizes
-
-Use one multiplicative size factor for all sources:
-
-```bash
---marker-size 1.3
-```
-
-or specify factors source by source:
-
-```bash
---marker-size 1.0 0.8 1.4
-```
-
-A factor of `1.0` is the default size. For a `slit` marker, `--marker-size` changes only the circle marking the slit center; it does not change the physical slit dimensions.
-
-## Slit marker
-
-A slit can be assigned to any source with:
-
-```bash
--m slit
-```
-
-or, for example, only to the second source:
-
-```bash
--m cross slit
-```
-
-The default slit dimensions are:
-
-- length: **240 arcsec** (4 arcmin)
-- width: **1 arcsec**
-
-Set them independently with:
+The default slit is **240 arcsec x 1 arcsec**. Change it with:
 
 ```bash
 --slit-length 180 --slit-width 0.8
 ```
 
-`--slit-length` is given in arcseconds and accepts any positive finite value. `--slit-width` is also in arcseconds and accepts values from **0.1 to 60 arcsec**.
+A user-specified `--marker` always overrides the automatic slit marker used for T in faint-source mode.
 
-The slit is vertical in the final chart. Because every chart is reprojected to a controlled sky orientation, a slit without `--angle` is aligned North-South (PA = 0 deg). When `--angle` is specified, the requested PA points upward and the slit is aligned with that PA.
+## Position angle and geometry
 
-All slit markers in a given chart use the same `--slit-length` and `--slit-width` values.
+The default orientation is **PA = 0 deg**, i.e. North up and East left.
 
-## Position angle and default orientation
-
-Every finding chart is reprojected onto a controlled final WCS so its orientation does not depend on the survey retrieval backend.
-
-If `--angle` is omitted, the display uses **PA = 0 deg**, which means:
-
-- North is up;
-- East is left.
-
-Use `-a/--angle` to choose a different orientation:
+Set another PA with:
 
 ```bash
 -a 45
 ```
 
-PA is measured in degrees **North through East**. The output image is reprojected so the requested PA points upward. The PA is shown in the title and encoded in the output filename only when `--angle` is explicitly supplied; the default North-up orientation does not add `PA0` to the filename.
+PA is measured North through East. When multiple sources are supplied, the terminal reports their separation, projected RA/Dec offsets, PA, and opposite PA relative to T. Angular values are shown in arcsec and switch to arcmin above 120 arcsec.
 
-Example:
+## Faint-source acquisition mode
+
+Use:
 
 ```bash
 python3 get_finding_chart.py \
     -c 17:05:35.520 -23:27:21.60 \
-    -a 45 \
-    -m slit \
-    --slit-length 180 \
-    --slit-width 0.8
+    --faint
 ```
 
-## Image scaling and contrast
+Default behavior:
 
-The default display uses:
+- search Gaia DR3 within 90 arcsec of T;
+- require `G_RP < 19`;
+- propagate positions to epoch 2026.0;
+- choose the closest suitable star as `G1`;
+- center the chart on that star;
+- align the automatic PA from the acquisition star toward T;
+- plot T with a slit unless the user specified another marker.
+
+Useful variants:
+
+```bash
+--faint 2
+--faint 14 18
+--faint 2 14 18
+--epoch 2000
+```
+
+These select G2, restrict the `G_RP` range, combine both, or change the propagation epoch. An explicit `--angle` overrides the automatic Gaia-star PA.
+
+The program warns, but does not modify the request, if the chosen FOV or slit is too short to include both T and the acquisition star.
+
+## Image display
+
+Defaults:
 
 ```text
 --scale auto
@@ -357,32 +215,31 @@ The default display uses:
 --high 99.5
 ```
 
-Available intensity-limit methods are:
+Available scale modes:
 
-- `auto` - sigma-clipped statistics constrained by `--low` and `--high` percentiles
-- `zscale` - Astropy ZScale
-- `percentile` - direct percentile limits from `--low` and `--high`
+```text
+auto  zscale  percentile
+```
 
-Available stretches are:
+Available stretches:
 
 ```text
 asinh  linear  sqrt  log
 ```
 
-For example:
+Use `--invert` for a dark-background image. `--vmin` and `--vmax` can force absolute display limits.
+
+## FITS and output files
+
+Default output is PNG. Other formats:
 
 ```bash
-python3 get_finding_chart.py \
-    -c 17:05:35.520 -23:27:21.60 \
-    --scale percentile --low 0.5 --high 99.8 \
-    --stretch sqrt
+-e pdf
+-e jpg
+-e eps
 ```
 
-Absolute intensity limits can be forced with `--vmin` and/or `--vmax`.
-
-## Saving the downloaded FITS image
-
-By default, the internal survey FITS file is temporary and is removed after the chart is produced.
+Use `-i/--id` to set the output filename prefix.
 
 Use:
 
@@ -390,106 +247,12 @@ Use:
 --fits field.fits
 ```
 
-to keep the downloaded FITS when the final chart is based on one of the normal survey/retrieval backends. For example:
+to retain a suitable downloaded FITS cutout. HiPS2FITS products are intentionally not saved as persistent FITS files because they are used here as finding-chart / visualization products rather than preferred calibrated survey images. Native ESO VHS SODA cutouts can be saved.
 
-```bash
-python3 get_finding_chart.py \
-    -c 17:05:35.520 -23:27:21.60 \
-    -s legacy \
-    --fits field.fits
-```
+## Notes
 
-For Pan-STARRS1 and 2MASS, the program first downloads and evaluates the preferred STScI/SkyView product in a temporary location. Only after that decision is made can a requested persistent FITS be written. This prevents an inadequate preferred image from being left behind when the chart subsequently switches to HiPS2FITS.
-
-If the final chart uses **CDS HiPS2FITS**, the requested `--fits` file is deliberately **not created or overwritten**. This includes the SDSS, GALEX, DES, VIKING, and AllWISE options, which use HiPS2FITS as their primary backend. The program prints a warning explaining that the HiPS2FITS image is a finding-chart / visualization product rather than the preferred image for survey photometry, and suppresses persistent FITS output to reduce the risk of misuse.
-
-If the preferred Pan-STARRS STScI or 2MASS SkyView image is retained, `--fits` is honored. If that preferred image is incomplete, HiPS2FITS is attempted, but HiPS2FITS itself fails, the program falls back to the incomplete preferred image; in that case `--fits` can still save that image and the warning in the terminal should be noted.
-
-For **VHS**, `--fits` is also honored: the saved file is the native ESO SODA cutout returned by the archive, not a HiPS2FITS rendering.
-
-The finding chart is always reprojected to its controlled final orientation. A saved FITS file is therefore the **original downloaded input cutout**, not the reprojected finding-chart image. The input is enlarged enough to support the final square reprojection without blank corners.
-
-## Output formats and filenames
-
-The default output format is PNG. Available formats are:
-
-```text
-png  pdf  jpg  eps
-```
-
-Select one with `-e/--extension`:
-
-```bash
--e pdf
-```
-
-Use `-i/--id` to change the filename prefix:
-
-```bash
--i GRB230307A
-```
-
-Output filenames include the identifier, survey, band, main-target coordinates, field size, and PA when applicable. A typical filename is:
-
-```text
-GRB230307A_ps1_r_256p398_-23p456_4arcmin_PA45.png
-```
-
-## Chart title and source information
-
-The first title line contains general field information, for example:
-
-```text
-Pan-STARRS1 | band r | 4x4 arcmin | PA 45 deg
-```
-
-Source coordinates are packed into at most two additional information lines. Slit dimensions are written immediately after the coordinates of the source carrying the slit, for example:
-
-```text
-s2: 17:05:36.100 -23:27:10.00 [slit 180" x 0.8"]
-```
-
-The program fits as many complete source entries as possible. If there is not enough room to print every source coordinate, the text ends with:
-
-```text
-[...]
-```
-
-This truncation affects only the title: all supplied sources are still plotted on the finding chart.
-
-## Complete example
-
-```bash
-python3 get_finding_chart.py \
-    -c 17:05:35.520 -23:27:21.60 \
-       17:05:36.100 -23:27:10.00 \
-       17:05:34.800 -23:27:40.00 \
-    -f 5 \
-    -i target \
-    -s ps1 -b r \
-    -a 45 \
-    -m cross slit circle \
-    --color red blue orange \
-    --marker-size 1.0 1.0 0.8 \
-    --slit-length 180 \
-    --slit-width 0.8
-```
-
-## Notes and limitations
-
-- Survey availability and sky coverage are determined by the external survey services. HiPS mosaicking can remove individual-image boundary gaps, but it cannot create data outside the actual survey footprint. VHS availability also depends on the selected band and VHS sub-survey footprint.
-- Pan-STARRS1 and 2MASS prefer STScI/SkyView respectively; HiPS2FITS is used automatically only when the preferred retrieval fails or the final displayed field has substantial missing edge/central coverage. SDSS, GALEX, DES, VIKING, and AllWISE use HiPS2FITS directly. VHS uses ESO TAP discovery and a native SODA FITS cutout.
-- The automatic coverage thresholds are pragmatic finding-chart safeguards, not a scientific data-quality metric. A field passing the check is not thereby certified for photometry.
-- If both the preferred retrieval and HiPS2FITS fail, the request fails. If the preferred image exists but is incomplete and the HiPS fallback fails, the program uses the incomplete preferred image and prints a warning.
-- Every chart is reprojected, including the default North-up view, so interpolation is part of the finding-chart rendering process.
-- The program does not redistribute survey data; images are retrieved on demand from the corresponding public services.
-- HiPS2FITS products are intended here for finding-chart construction and visualization, not as replacements for native calibrated survey products used for photometry.
-- When survey images are used in publications, presentations, or data products, cite or acknowledge the original survey according to its data-use policy.
-- CDS requests that users of HiPS2FITS acknowledge the service as a tool provided by CDS, Strasbourg, France.
-- Any persistent `--fits` image remains the original downloaded input cutout rather than the reprojected finding-chart image.
-
-## Author
-
-Andrea Rossi
-
-Development assistance: OpenAI ChatGPT.
+- Survey availability and footprint are determined by the external services.
+- Finding-chart images are reprojected to the requested orientation, so interpolation is part of the rendering process.
+- Persistent FITS files, when allowed, are the downloaded input cutouts rather than the reprojected finding-chart image.
+- Faint-source mode depends on Gaia DR3 astrometry and photometry; proper-motion propagation uses Gaia `pmra` and `pmdec` when available.
+- When using survey data in publications, follow the acknowledgement and citation policy of the original survey/service.
