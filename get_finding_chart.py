@@ -14,12 +14,13 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "2.0.5"
+__version__ = "2.1.1"
 
 import argparse
 import csv
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -93,8 +94,13 @@ COLORBLIND_PALETTE = (
     "#000000",  # black
 )
 ACQUISITION_COLOR = COLORBLIND_PALETTE[1]
-COMPASS_COLOR = "#006400"  # dark green, intentionally independent of marker palette
+COMPASS_COLOR = ACQUISITION_COLOR  # match the Gaia acquisition marker
 DEFAULT_MARKER_SIZE = 1.0
+
+# Keep output files smaller and set a rough target for the sky in auto mode.
+OUTPUT_DPI = 98  # two thirds of the previous 147 dpi raster resolution
+MIN_SKY_BRIGHTNESS = 0.70  # first protect the upper cut and black star cores
+TARGET_SKY_BRIGHTNESS = 0.75  # approximate white level in reversed grayscale
 
 SKYMAPPER_SIAP_URL = "https://api.skymapper.nci.org.au/public/siap/dr4/query"
 SKYMAPPER_BASE_URL = "https://api.skymapper.nci.org.au/"
@@ -1847,6 +1853,7 @@ def get_stretch(name: str):
     return stretches[name]
 
 
+# Estimate cuts from a sampled image and keep the sky readable in auto mode.
 def compute_intensity_limits(
     finite: np.ndarray,
     scale: str,
@@ -1854,6 +1861,8 @@ def compute_intensity_limits(
     high_percentile: float,
     user_vmin: float | None,
     user_vmax: float | None,
+    stretch_name: str = "asinh",
+    invert: bool = False,
 ) -> tuple[float, float]:
     """Determine robust display limits."""
     if finite.size == 0:
@@ -1885,6 +1894,17 @@ def compute_intensity_limits(
     else:
         raise ValueError(f"Unsupported scale mode: {scale}")
 
+    # First raise the upper cut only enough for a readable sky. Then raise the
+    # lower cut a little to brighten the sky without moving that upper cut.
+    if scale == "auto" and not invert and user_vmin is None and user_vmax is None:
+        minimum_fraction, target_fraction = get_stretch(stretch_name).inverse(
+            np.array([1.0 - MIN_SKY_BRIGHTNESS, 1.0 - TARGET_SKY_BRIGHTNESS])
+        )
+        if np.isfinite(median) and median > vmin and minimum_fraction > 0:
+            vmax = max(vmax, vmin + (median - vmin) / minimum_fraction)
+            vmin = max(vmin, (median - target_fraction * vmax) / (1.0 - target_fraction))
+
+    # Explicit absolute cuts retain their existing precedence.
     if user_vmin is not None:
         vmin = user_vmin
     if user_vmax is not None:
@@ -2336,6 +2356,7 @@ def build_info_lines(
 # -----------------------------------------------------------------------------
 
 
+# Reproject the FITS image, draw the annotations, and save the requested chart.
 def make_finding_chart(
     fits_path: Path,
     output: Path,
@@ -2387,6 +2408,8 @@ def make_finding_chart(
         high_percentile,
         user_vmin,
         user_vmax,
+        stretch_name,
+        invert,
     )
     print(f"Display limits: vmin={vmin:.6g}  vmax={vmax:.6g}")
 
@@ -2514,7 +2537,7 @@ def make_finding_chart(
     fig.savefig(
         output,
         format=output.suffix.lstrip("."),
-        dpi=220,
+        dpi=OUTPUT_DPI,
         bbox_inches="tight",
         pad_inches=0.08,
         facecolor="white",
@@ -2527,6 +2550,7 @@ def make_finding_chart(
 # -----------------------------------------------------------------------------
 
 
+# Define command-line options and their user-facing help.
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -2718,15 +2742,15 @@ Examples:
         "--low",
         type=float,
         default=1.0,
-        help="Lower percentile; also controls contrast in auto mode (default: 1).",
+        help="Lower percentile for initial display cuts (default: 1).",
     )
     display.add_argument(
         "--high",
         type=float,
         default=99.5,
         help=(
-            "Upper percentile; also controls contrast in auto mode "
-            "(default: 99.5)."
+            "Upper percentile for initial display cuts; auto mode may raise "
+            "the upper cut to lighten the sky (default: 99.5)."
         ),
     )
     display.add_argument(
@@ -2751,6 +2775,12 @@ Examples:
         help="Finding-chart output format (default: png).",
     )
     output_group.add_argument(
+        "-g",
+        "--graphics",
+        action="store_true",
+        help="Open the saved chart in the system's default viewer (Linux/macOS).",
+    )
+    output_group.add_argument(
         "--fits",
         metavar="FILENAME",
         default=None,
@@ -2771,6 +2801,33 @@ Examples:
     return parser
 
 
+# Launch the saved chart with the desktop's default file handler.
+def open_chart(output: Path) -> None:
+    """Open a successfully written chart without waiting for the viewer."""
+    # Choose the desktop file handler for the current platform.
+    if sys.platform == "darwin":
+        command = "open"
+    elif sys.platform.startswith("linux"):
+        command = "xdg-open"
+    else:
+        command = None
+    if command is None or shutil.which(command) is None:
+        print("WARNING: No supported system opener is available.", file=sys.stderr)
+        return
+
+    # A viewer can stay open indefinitely, so leave it running independently.
+    try:
+        subprocess.Popen(
+            [command, str(output.resolve())],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        print(f"WARNING: Could not open chart: {exc}", file=sys.stderr)
+
+
+# Parse the request, retrieve or read the image, and report the saved chart.
 def main() -> int:
     parser = make_parser()
     args = parser.parse_args(normalize_coordinate_argv(sys.argv[1:]))
@@ -3046,6 +3103,9 @@ def main() -> int:
         report_relative_geometry(coords)
 
     print(f"Finding chart: {output}")
+    # Only a completed chart reaches the viewer request.
+    if args.graphics:
+        open_chart(output)
     return 0
 
 

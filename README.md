@@ -2,7 +2,7 @@
 
 Command-line Python tool for downloading public survey images and creating annotated astronomical finding charts with WCS coordinates, source markers, optional slit overlays, controlled position angle, configurable image scaling, and Gaia-assisted acquisition for faint targets.
 
-Current release: **v2.0.5**.
+Current release: **v2.1.1**.
 
 ## Author
 
@@ -22,7 +22,7 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
 - Controlled chart orientation: North up / East left by default, or any PA with `-a/--angle`.
 - Source markers: `x`, `cross`, `circle`, `diamond`, and `slit`.
 - Default marker colors use a **color-blind-friendly Okabe-Ito palette**; `--color` overrides the defaults.
-- North/East compass is always drawn in **dark green**, independently of the source-marker palette.
+- North/East compass uses the same **blue** as the Gaia acquisition marker.
 - Configurable slit length, width, marker size, and per-source colors.
 - Long slits are clipped to the requested square FOV and do not change the plot size.
 - Relative geometry from each secondary source to T: separation, projected `DeltaRA`, `DeltaDec`, PA, and opposite PA.
@@ -40,9 +40,10 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
   - `--epoch YEAR` changes the proper-motion epoch;
   - terminal output lists up to the five closest Gaia candidates, plus the selected star when needed;
   - only the selected acquisition star is plotted, with a `GN -> T` offset box.
-- Intensity scaling with `auto`, `zscale`, or percentile limits and `asinh`, linear, square-root, or logarithmic stretches.
+- Intensity scaling with `auto`, `zscale`, or percentile limits and `asinh`, linear, square-root, or logarithmic stretches. Auto scaling roughly keeps the sky background light.
 - `--invert` for a dark-background grayscale display.
 - Set the output filename prefix with `-n/--name`; output to PNG, PDF, JPG, or EPS.
+- Open a saved chart in the system default viewer on Linux or macOS with `-g/--graphics`.
 - Optional saving of suitable downloaded FITS cutouts with `--fits`.
 
 ## Requirements
@@ -238,7 +239,7 @@ Available stretches:
 asinh  linear  sqrt  log
 ```
 
-Use `--invert` for a dark-background image. `--vmin` and `--vmax` can force absolute display limits.
+Default `auto` scaling estimates the sky median from sampled pixels. It first sets an upper cut for a readable sky, then adjusts the lower cut to make the background roughly 75% white while retaining black star cores. This is a rough display adjustment; `--low` and `--high` still set the initial cuts. Use `--invert` for a dark-background image. `--vmin` and `--vmax` force absolute display limits and bypass the automatic background adjustment. `zscale` and `percentile` retain their own cuts.
 
 ## FITS and output files
 
@@ -251,6 +252,8 @@ Default output is PNG. Other formats:
 ```
 
 Use `-n/--name` to set the output filename prefix. Use `-i/--image` to provide a local FITS input instead of downloading survey imaging. With `--image`, do not use survey selection options (`-s/--survey`, `-b/--band`, or `--legacy-layer`) or `--fits`.
+
+Raster output uses 98 dpi. Add `-g/--graphics` to open the chart after it is saved. This uses the default desktop file handler (`xdg-open` on Linux or `open` on macOS) and requires a graphical desktop session.
 
 Use:
 
