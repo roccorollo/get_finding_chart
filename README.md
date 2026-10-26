@@ -5,7 +5,7 @@ Command-line Python tool for downloading public survey images and creating annot
 Current release: **v4.0.0**.
 
 <p align="center">
-  <img src="images/fc_example_g1T.png" width="400">
+  <img src="images/fc_example_g1T.png" width="600">
 </p>
 
 
