@@ -2,7 +2,7 @@
 
 Command-line Python tool for downloading public survey images and creating annotated astronomical finding charts with WCS coordinates, source markers, optional slit overlays, controlled position angle, configurable image scaling, and Gaia-assisted acquisition for faint targets.
 
-Current release: **v2.1.1**.
+Current release: **v4.0.0**.
 
 ## Author
 
@@ -15,10 +15,10 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
 
 ## Features
 
-- Retrieve imaging from **Pan-STARRS1, DESI Legacy Survey DR10, SkyMapper DR4, SDSS DR9, GALEX GR6/7, DES DR2, VISTA VIKING, VISTA Hemisphere Survey (VHS), DSS2, 2MASS, and AllWISE**.
+- Retrieve imaging from **Pan-STARRS1, DESI Legacy Survey DR10, SkyMapper DR4, SDSS DR9, GALEX GR6/7, DES DR2, VISTA VIKING, VISTA Hemisphere Survey (VHS), UKIRT Hemisphere Survey (UHS), DSS2, 2MASS, and AllWISE**.
 - Use a local FITS image with celestial WCS through `-i/--image`.
 - Accept decimal or sexagesimal RA/Dec coordinates and plot up to **10 sources**.
-- Default **4 x 4 arcmin** field, with arbitrary square FOVs through `-f/--fov`.
+- Default **4 x 4 arcmin** field, with square FOV sides in arcminutes through `-f/--fov`; bare numbers mean arcminutes.
 - Controlled chart orientation: North up / East left by default, or any PA with `-a/--angle`.
 - Source markers: `x`, `cross`, `circle`, `diamond`, and `slit`.
 - Default marker colors use a **color-blind-friendly Okabe-Ito palette**; `--color` overrides the defaults.
@@ -84,6 +84,8 @@ For all options:
 python3 get_finding_chart.py --help
 ```
 
+Show the installed script version with `-v` or `--version`.
+
 ## Quick start
 
 Default Pan-STARRS1 r-band chart:
@@ -132,14 +134,19 @@ The first source is labelled **T**; additional sources are `s2`, `s3`, etc.
 | `galex` | GALEX GR6/7 | `FUV NUV` | `NUV` |
 | `des` | DES DR2 | `g r i z Y` | `r` |
 | `viking` / `vik` | VISTA VIKING | `z Y J H K` | `K` |
-| `vhs` | VISTA Hemisphere Survey | `Y J H K` | `K` |
+| `vhs` | VISTA Hemisphere Survey | `Y J H K` | `J` |
+| `uhs` | UKIRT Hemisphere Survey DR1 | `J` | `J` |
 | `dss2` | DSS2 | `red/r blue/b ir/i` | `red` |
 | `2mass` | 2MASS | `J H K` | `J` |
 | `allwise` / `aw` | AllWISE | `w1 w2 w3 w4` | `w1` |
 
+For UHS J-band charts, use `-s uhs` (optionally `-b J`).
+
 `panstarrs` is also accepted as an alias for `ps1`. VIKING and VHS accept `Ks` / `K_s` as aliases for `K` where applicable. AllWISE also accepts `1`, `2`, `3`, `4` and the approximate wavelengths `3.4`, `4.6`, `12`, `22`.
 
-Pan-STARRS1 and 2MASS prefer their standard backends and can fall back to CDS HiPS2FITS when coverage is inadequate. SDSS, GALEX, DES, VIKING, and AllWISE use CDS HiPS2FITS directly. VHS is retrieved from the ESO Science Archive via TAP + SODA.
+VHS defaults to J; use `-b K` to request Ks explicitly. The ESO archive must have an image in the selected band covering the field.
+
+Pan-STARRS1 and 2MASS prefer their standard backends and can fall back to CDS HiPS2FITS when coverage is inadequate. SDSS, GALEX, DES, VIKING, UHS, and AllWISE use CDS HiPS2FITS directly. UHS currently provides J-band imaging only and covers part of the northern sky. VHS is retrieved from the ESO Science Archive via TAP + SODA.
 
 ## Markers, colors, and slit
 
@@ -251,7 +258,9 @@ Default output is PNG. Other formats:
 -e eps
 ```
 
-Use `-n/--name` to set the output filename prefix. Use `-i/--image` to provide a local FITS input instead of downloading survey imaging. With `--image`, do not use survey selection options (`-s/--survey`, `-b/--band`, or `--legacy-layer`) or `--fits`.
+Use `-o/--output PATH` to choose the chart filename. Its `.png`, `.pdf`, `.jpg`, or `.eps` suffix selects the format. If `-e/--extension` is also given, it must match the suffix. Without `-o`, `-n/--name` sets the generated filename prefix and `-e` selects the format. An existing chart is refused unless `--overwrite` is supplied. Chart files are staged beside their destination and published after rendering succeeds.
+
+Use `-i/--image` to provide a local FITS input instead of downloading survey imaging. With `--image`, do not use survey selection options (`-s/--survey`, `-b/--band`, or `--legacy-layer`) or `--fits`.
 
 Raster output uses 98 dpi. Add `-g/--graphics` to open the chart after it is saved. This uses the default desktop file handler (`xdg-open` on Linux or `open` on macOS) and requires a graphical desktop session.
 
@@ -261,7 +270,11 @@ Use:
 --fits field.fits
 ```
 
-to retain a suitable downloaded FITS cutout. HiPS2FITS products are intentionally not saved as persistent FITS files because they are used here as finding-chart / visualization products rather than preferred calibrated survey images. Native ESO VHS SODA cutouts can be saved.
+to retain a suitable downloaded FITS cutout. An existing `--fits` file is refused unless `--overwrite` is supplied; a completed native FITS file is staged before publication. HiPS2FITS products are intentionally not saved as persistent FITS files because they are used here as finding-chart / visualization products rather than preferred calibrated survey images. Native ESO VHS SODA cutouts can be saved.
+
+## Checks
+
+Run offline checks with `python -m unittest discover -s tests -p 'test_*.py'` from this folder. These tests use local FITS fixtures and mocked survey responses.
 
 ## Notes
 

@@ -4,7 +4,7 @@
 
 Supports Pan-STARRS1, DESI Legacy Surveys, SkyMapper DR4, SDSS DR9,
 GALEX GR6/7, DES DR2, VISTA VIKING, VISTA Hemisphere Survey (VHS),
-DSS2, 2MASS, and AllWISE. Includes an optional Gaia DR3 faint-source
+UKIRT Hemisphere Survey (UHS), DSS2, 2MASS, and AllWISE. Includes an optional Gaia DR3 faint-source
 acquisition mode and inverted grayscale display.
 See README.md for usage examples.
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "2.1.1"
+__version__ = "4.0.0"
 
 import argparse
 import csv
@@ -129,7 +129,7 @@ HIPS_PS1 = {
 HIPS_2MASS = {band: f"CDS/P/2MASS/{band}" for band in ("J", "H", "K")}
 
 # Surveys retrieved directly through CDS HiPS2FITS. Keys are normalized
-# lower-case CLI band names; values are the corresponding CDS HiPS IDs.
+# lower-case CLI band names; values are HiPS IDs served by CDS HiPS2FITS.
 HIPS_PRIMARY = {
     "sdss": {
         band: f"CDS/P/SDSS9/{band}" for band in ("u", "g", "r", "i", "z")
@@ -152,6 +152,7 @@ HIPS_PRIMARY = {
         "h": "CDS/P/VISTA/VIKING/H",
         "k": "CDS/P/VISTA/VIKING/K",
     },
+    "uhs": {"j": "wfau.roe.ac.uk/P/UHSDR1/J"},
     "allwise": {
         "w1": "CDS/P/allWISE/W1",
         "w2": "CDS/P/allWISE/W2",
@@ -179,6 +180,7 @@ HIPS_BAND_HELP = {
     "galex": "FUV NUV",
     "des": "g r i z Y",
     "viking": "z Y J H K",
+    "uhs": "J",
     "allwise": "w1 w2 w3 w4",
 }
 
@@ -231,7 +233,8 @@ SURVEYS = {
     "galex": SurveySpec("GALEX GR6/7", "galex", "nuv", 1.5),
     "des": SurveySpec("DES DR2", "desdr2", "r", 0.263),
     "viking": SurveySpec("VISTA VIKING", "viking", "K", 0.339),
-    "vhs": SurveySpec("VISTA Hemisphere Survey", "vhs", "K", 0.339),
+    "vhs": SurveySpec("VISTA Hemisphere Survey", "vhs", "J", 0.339),
+    "uhs": SurveySpec("UKIRT Hemisphere Survey DR1", "uhs", "J", 0.403),
     "dss2": SurveySpec("DSS2", "dss2", "red", 1.0),
     "2mass": SurveySpec("2MASS", "2mass", "J", 1.0),
     "allwise": SurveySpec("AllWISE", "allwise", "w1", 1.375),
@@ -245,11 +248,11 @@ SURVEY_ALIASES = {
     "panstarrs": "ps1",
 }
 
-# Keep the --help survey list in a deliberate human-friendly order:
-# short names first, followed by the long/canonical names.
+# Keep every accepted survey spelling once; help groups short and long aliases.
 SURVEY_CHOICES = (
-    "ps1", "ls", "sm", "sdss", "galex", "des", "vik", "vhs", "dss2", "2mass", "aw",
-    "panstarrs", "legacy", "skymapper", "sdss", "galex", "des", "viking", "vhs", "dss2", "2mass", "allwise",
+    "ps1", "panstarrs", "ls", "legacy", "sm", "skymapper", "sdss",
+    "galex", "des", "vik", "viking", "vhs", "uhs", "dss2",
+    "2mass", "aw", "allwise",
 )
 
 
@@ -407,7 +410,7 @@ def canonical_survey(name: str) -> str:
 
 
 def resolve_primary_hips_band(survey: str, band: str) -> tuple[str, str]:
-    """Return normalized band and CDS HiPS ID for a primary HiPS survey."""
+    """Return normalized band and registered HiPS ID for a primary HiPS survey."""
     key = str(band).strip().lower()
     key = HIPS_BAND_ALIASES.get(survey, {}).get(key, key)
     mapping = HIPS_PRIMARY[survey]
@@ -954,6 +957,7 @@ def save_requested_fits(
     source: Path,
     requested: str | None,
     retrieval: RetrievalInfo,
+    overwrite: bool = False,
 ) -> Path | None:
     """Persist a downloaded FITS only when it is suitable for user retention."""
     if requested is None:
@@ -970,7 +974,20 @@ def save_requested_fits(
         )
         return None
 
-    shutil.copy2(source, destination)
+    # Stage a native survey image beside the requested path before publishing it.
+    with tempfile.NamedTemporaryFile(
+        dir=destination.parent, prefix=f".{destination.name}.",
+        suffix=".tmp", delete=False,
+    ) as temporary:
+        staged = Path(temporary.name)
+    try:
+        shutil.copy2(source, staged)
+        if overwrite:
+            staged.replace(destination)
+        else:
+            destination.hardlink_to(staged)
+    finally:
+        staged.unlink(missing_ok=True)
     print(f"Downloaded FITS: {destination}")
     return destination
 
@@ -1476,7 +1493,7 @@ def retrieve_image(
     """Retrieve the survey image and report which backend produced it.
 
     Pan-STARRS1 and 2MASS prefer their previous backends and use HiPS2FITS
-    only as a fallback. SDSS, GALEX, DES, VIKING, and AllWISE are retrieved
+    only as a fallback. SDSS, GALEX, DES, VIKING, UHS, and AllWISE are retrieved
     directly through CDS HiPS2FITS. VHS is retrieved from the ESO archive via
     TAP discovery plus a SODA FITS cutout.
     """
@@ -2536,7 +2553,7 @@ def make_finding_chart(
 
     fig.savefig(
         output,
-        format=output.suffix.lstrip("."),
+        format=output.suffix.lower().lstrip("."),
         dpi=OUTPUT_DPI,
         bbox_inches="tight",
         pad_inches=0.08,
@@ -2563,7 +2580,9 @@ Examples:
   %(prog)s -c 256.398 -23.456 -f 5 -n target1 -s skymapper
   %(prog)s -c 256.398 -23.456 -i local_image.fits -n target1
   %(prog)s -c 256.398 -23.456 -f 10 -s allwise -b w1
+  %(prog)s -c 256.398 -23.456 -f 6 -s vhs
   %(prog)s -c 256.398 -23.456 -f 6 -s vhs -b K
+  %(prog)s -c 256.398 -23.456 -f 6 -s uhs -b J
   %(prog)s -c 17:05:35.520 -23:27:21.60 -f 5 -a 45 -m slit --slit-length 180 --slit-width 0.8
   %(prog)s -c 17:05:35.520 -23:27:21.60 17:05:36.100 -23:27:10.0 \
            17:05:34.800 -23:27:40.0 -f 5 -a 45 -m x slit diamond
@@ -2591,7 +2610,7 @@ Examples:
         "--fov",
         default=DEFAULT_FOV_ARCMIN,
         metavar="ARCMIN",
-        help=f"Square field side in arcminutes (default: {DEFAULT_FOV_ARCMIN:g}).",
+        help=f"Square field side in arcminutes; bare numbers are arcminutes (default: {DEFAULT_FOV_ARCMIN:g} arcmin).",
     )
     basic.add_argument(
         "-n",
@@ -2612,8 +2631,13 @@ Examples:
         "-s",
         "--survey",
         choices=SURVEY_CHOICES,
+        metavar="SURVEY",
         default=None,
-        help="Survey to use (default: ps1).",
+        help=(
+            "Survey: ps1/panstarrs, ls/legacy, sm/skymapper, sdss, "
+            "galex, des, vik/viking, vhs, uhs, dss2, 2mass, "
+            "aw/allwise (default: ps1)."
+        ),
     )
     survey_group.add_argument(
         "--legacy-layer",
@@ -2771,8 +2795,18 @@ Examples:
         "-e",
         "--extension",
         choices=("png", "pdf", "jpg", "eps"),
-        default="png",
-        help="Finding-chart output format (default: png).",
+        default=None,
+        help="Finding-chart format; inferred from --output suffix, otherwise png.",
+    )
+    output_group.add_argument(
+        "-o", "--output",
+        type=Path,
+        metavar="PATH",
+        help="Chart output path; suffix selects png, pdf, jpg, or eps.",
+    )
+    output_group.add_argument(
+        "--overwrite", action="store_true",
+        help="Replace an existing chart or requested --fits file.",
     )
     output_group.add_argument(
         "-g",
@@ -2793,6 +2827,7 @@ Examples:
     )
 
     parser.add_argument(
+        "-v",
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
@@ -2972,16 +3007,36 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    output = build_output_name(
-        args.name,
-        spec,
-        band,
-        ra_main,
-        dec_main,
-        fov_arcmin,
-        args.extension,
-        angle,
-    )
+    # Infer the chart format from an explicit output suffix and reject conflicts.
+    if args.output is not None:
+        output = args.output
+        extension = output.suffix.lower().lstrip(".")
+        if extension not in {"png", "pdf", "jpg", "eps"}:
+            parser.error("--output must end in .png, .pdf, .jpg, or .eps")
+        if args.extension is not None and extension != args.extension:
+            parser.error("--extension must match the --output filename suffix")
+    else:
+        extension = args.extension or "png"
+        output = build_output_name(
+            args.name, spec, band, ra_main, dec_main, fov_arcmin,
+            extension, angle,
+        )
+
+    # Reject existing results and invalid destinations before querying a service.
+    if not output.parent.is_dir():
+        parser.error(f"Output directory does not exist: {output.parent}")
+    if output.exists() and not args.overwrite:
+        parser.error(f"Chart already exists: {output} (use --overwrite)")
+    fits_destination = Path(args.fits).expanduser() if args.fits is not None else None
+    if fits_destination is not None:
+        if not fits_destination.parent.is_dir():
+            parser.error(f"FITS output directory does not exist: {fits_destination.parent}")
+        if fits_destination.resolve() == output.resolve():
+            parser.error("--fits and --output must refer to different files")
+        if fits_destination.exists() and not args.overwrite:
+            parser.error(f"FITS output already exists: {fits_destination} (use --overwrite)")
+    if image_path is not None and output.resolve() == image_path.resolve():
+        parser.error("Chart output must differ from the input FITS image")
 
     print(f"Main target: RA={ra_main:.8f} deg  Dec={dec_main:+.8f} deg")
     for idx, (ra, dec) in enumerate(coords[1:], start=2):
@@ -3059,34 +3114,47 @@ def main() -> int:
                 if selected_gaia is not None
                 else None
             )
-            make_finding_chart(
-                fits_path,
-                output,
-                coords,
-                (center_coord.ra.deg, center_coord.dec.deg),
-                acquisition_coord_deg,
-                acquisition_label,
-                markers,
-                colors,
-                marker_sizes,
-                fov_arcmin,
-                spec.pixel_scale,
-                spec.label,
-                band,
-                angle,
-                args.slit_width,
-                args.slit_length,
-                args.scale,
-                args.stretch,
-                args.low,
-                args.high,
-                args.vmin,
-                args.vmax,
-                args.invert,
-            )
+            # Render beside the destination, then publish only a completed chart.
+            with tempfile.TemporaryDirectory(
+                dir=output.parent, prefix=f".{output.name}."
+            ) as chart_folder:
+                staged_chart = Path(chart_folder) / output.name
+                make_finding_chart(
+                    fits_path,
+                    staged_chart,
+                    coords,
+                    (center_coord.ra.deg, center_coord.dec.deg),
+                    acquisition_coord_deg,
+                    acquisition_label,
+                    markers,
+                    colors,
+                    marker_sizes,
+                    fov_arcmin,
+                    spec.pixel_scale,
+                    spec.label,
+                    band,
+                    angle,
+                    args.slit_width,
+                    args.slit_length,
+                    args.scale,
+                    args.stretch,
+                    args.low,
+                    args.high,
+                    args.vmin,
+                    args.vmax,
+                    args.invert,
+                )
 
-            if retrieval is not None:
-                save_requested_fits(fits_path, args.fits, retrieval)
+                # Save the optional FITS first so a chart is published last.
+                if not staged_chart.is_file():
+                    raise RuntimeError("Chart renderer did not create an output file.")
+                if retrieval is not None:
+                    save_requested_fits(fits_path, args.fits, retrieval,
+                                        overwrite=args.overwrite)
+                if args.overwrite:
+                    staged_chart.replace(output)
+                else:
+                    output.hardlink_to(staged_chart)
 
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
