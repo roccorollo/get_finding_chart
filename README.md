@@ -2,12 +2,11 @@
 
 Command-line Python tool for downloading public survey images and creating annotated astronomical finding charts with WCS coordinates, source markers, optional slit overlays, controlled position angle, configurable image scaling, and Gaia-assisted acquisition for faint targets.
 
-Current release: **v4.0.0**.
-
 <p align="center">
-  <img src="images/fc_example_g1T.png" width="600">
+  <img src="images/fc_example_g1T.png" alt="Example astronomical finding chart with option -F" width="600">
 </p>
 
+Current release: **v5.1.0**.
 
 ## Author
 
@@ -31,7 +30,7 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
 - Configurable slit length, width, marker size, and per-source colors.
 - Long slits are clipped to the requested square FOV and do not change the plot size.
 - Relative geometry from each secondary source to T: separation, projected `DeltaRA`, `DeltaDec`, PA, and opposite PA.
-- Compact `s2 -> T` offset box in normal mode.
+- Compact `S -> T` offset box in normal mode.
 - **Faint-source acquisition mode** using Gaia DR3:
   - `-F`, `--faint`, or `--faint-source`;
   - searches within **90 arcsec** of T;
@@ -126,7 +125,7 @@ python3 get_finding_chart.py \
 
 The FITS image must have a usable two-dimensional celestial WCS and cover the requested field. The chart uses the image's pixel scale and still centers and orients the output according to `-c`, `-f`, and `-a`.
 
-The first source is labelled **T**; additional sources are `s2`, `s3`, etc.
+The last coordinate pair is the target **T**. Earlier pairs are labelled `S`, `S2`, `S3`, etc., in input order. With one pair, it is **T**. A normal chart centers on the first pair (`S` when several pairs are supplied); `--faint` centers on the selected Gaia star. Offsets go from each preceding source to **T**, and the default output name uses **T**. Specify per-source markers, colors, and sizes in coordinate order. Choose a field of view that includes **T** if it lies far from the chart center.
 
 ## Surveys and bands
 
@@ -193,7 +192,7 @@ Set another PA with:
 -a 45
 ```
 
-PA is measured North through East. When multiple sources are supplied, the terminal reports the separation, projected RA/Dec offsets, PA, and opposite PA for a move from each source to T. The chart's offset box also gives the move from `s2` to T, or from the selected Gaia star to T in faint-source mode. Positive `DeltaRA` means east and positive `DeltaDec` means north. Angular values are shown in arcsec and switch to arcmin above 120 arcsec.
+PA is measured North through East. When multiple sources are supplied, the terminal reports the separation, projected RA/Dec offsets, PA, and opposite PA for a move from each source to T. The chart's offset box also gives the move from `S` to T, or from the selected Gaia star to T in faint-source mode. Positive `DeltaRA` means east and positive `DeltaDec` means north. Angular values are shown in arcsec and switch to arcmin above 120 arcsec.
 
 ## Faint-source acquisition mode
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.1.0
+
+- Add `update_github.sh` to copy a packaged release into a fresh clone of an existing Git repository, commit changed release files, and push its current branch.
+
+## 5.0.2
+
+- Keep the final target T visible in the chart's coordinate heading when many source blocks exceed its two-line layout.
+- Include the README example image in the release archive.
+
+## 5.0.1
+
+- Center normal multi-source charts and downloaded fields on the first supplied source S, while keeping the final source T as the offset destination and output-name coordinate. Faint-source mode continues to center on the selected Gaia star.
+
+## 5.0.0
+
+- Interpret the final coordinate pair as T and preceding pairs as S, S2, S3, etc. Center normal charts and name outputs from the final target; calculate source offsets toward it.
+- Apply the faint-source default slit and Gaia acquisition search to the final target. This is a major release because existing multi-coordinate commands change target unless their coordinate pairs are reordered.
+
+## 4.0.1
+
+- Correct input-source labels to `T`, `S`, `S2`, `S3`, ... consistently across chart markers, coordinate headings, offsets, terminal reports, and CLI help. Gaia acquisition labels are unchanged.
+
 ## 4.0.0
 
 - Present accepted survey aliases as short/long pairs in `--help`.

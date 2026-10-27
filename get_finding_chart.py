@@ -11,10 +11,11 @@ See README.md for usage examples.
 
 from __future__ import annotations
 
+# Keep the script's release metadata together.
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "4.0.0"
+__version__ = "5.1.0"
 
 import argparse
 import csv
@@ -616,14 +617,23 @@ def source_to_target_offset_text(
     )
 
 
+# Map one-based input positions to labels shared by charts and terminal reports.
+def source_label(index: int, count: int) -> str:
+    """Return S, S2, ..., T in coordinate input order."""
+    # The final pair is T, including the single-coordinate case.
+    return "T" if index == count else "S" if index == 1 else f"S{index}"
+
+
+# Report each secondary source's move to T using the shared input-source labels.
 def report_relative_geometry(coords_deg: list[tuple[float, float]]) -> None:
     """Report geometry for moves from secondary sources to the main target."""
     if len(coords_deg) <= 1:
         return
 
+    # The final input pair defines the target for every relative offset.
     target = SkyCoord(
-        ra=coords_deg[0][0] * u.deg,
-        dec=coords_deg[0][1] * u.deg,
+        ra=coords_deg[-1][0] * u.deg,
+        dec=coords_deg[-1][1] * u.deg,
         frame="icrs",
     )
 
@@ -632,7 +642,7 @@ def report_relative_geometry(coords_deg: list[tuple[float, float]]) -> None:
     print("  (Offsets are from each source to T; +RA=east, +Dec=north.)")
     print()
 
-    for idx, (ra, dec) in enumerate(coords_deg[1:], start=2):
+    for idx, (ra, dec) in enumerate(coords_deg[:-1], start=1):
         source = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
         (
             separation_arcsec,
@@ -650,13 +660,15 @@ def report_relative_geometry(coords_deg: list[tuple[float, float]]) -> None:
                 f"opposite PA={opposite_pa_deg:.2f} deg"
             )
 
-        print(f"s{idx}:")
+        # Use the same source name as the plotted marker and coordinate heading.
+        label = source_label(idx, len(coords_deg))
+        print(f"{label}:")
         print(f"    separation={format_angular_offset(separation_arcsec)};")
         print(
             f"    DeltaRA={format_angular_offset(delta_ra_arcsec, signed=True)}; "
             f"DeltaDec={format_angular_offset(delta_dec_arcsec, signed=True)};"
         )
-        print(f"    PA(s{idx}->T)={pa_text}")
+        print(f"    PA({label}->T)={pa_text}")
         print()
 
 
@@ -2085,6 +2097,7 @@ def add_slit(
     )
 
 
+# Draw input-source markers and their labels in coordinate input order.
 def add_sources(
     ax,
     wcs: WCS,
@@ -2109,8 +2122,9 @@ def add_sources(
         if position is None:
             continue
 
+        # Retain the input index even when an earlier source falls off the chart.
         x, y = position
-        label = "T" if idx == 1 else f"s{idx}"
+        label = source_label(idx, len(coords))
 
         if marker == "cross":
             add_cross(ax, x, y, nx, ny, color, size_factor)
@@ -2274,6 +2288,7 @@ def choose_heading_fontsize(fig, ax, text: str) -> float:
     return 10.0
 
 
+# Pack labelled source coordinates and optional slit details into the heading.
 def build_info_lines(
     fig,
     ax,
@@ -2291,15 +2306,17 @@ def build_info_lines(
     the second line ends with ``[...]``.
     """
 
+    # Format one source with the same name used for its plotted marker.
     def source_token(idx: int, coord: SkyCoord, marker: str) -> str:
         ra_text, dec_text = format_title_coord(coord)
 
-        if idx == 1:
+        label = source_label(idx, len(skycoords))
+        if label == "T":
             token = f"T: RA {ra_text}   Dec {dec_text}"
         else:
             # RA/Dec are obvious from the paired sexagesimal values, so avoid
             # repeating the labels for every secondary source and save space.
-            token = f"s{idx}: {ra_text} {dec_text}"
+            token = f"{label}: {ra_text} {dec_text}"
 
         if marker == "slit":
             token += (
@@ -2316,11 +2333,9 @@ def build_info_lines(
 
     separator = "   |   "
 
-    def compose(parts: list[str], line_number: int, truncated: bool = False) -> str:
-        pieces = list(parts)
-        if truncated:
-            pieces.append("[...]")
-        text = separator.join(pieces)
+    # Keep the same spacing for both lines and indent the second line.
+    def compose(parts: list[str], line_number: int) -> str:
+        text = separator.join(parts)
         return ("    " + text) if line_number == 2 and text else text
 
     # Pack as many complete source blocks as possible onto line 1.
@@ -2331,8 +2346,7 @@ def build_info_lines(
         if line1_parts and not text_fits_axis(fig, ax, candidate):
             break
 
-        # Always keep T on line 1 even in the unlikely case that the complete
-        # T block itself is wider than the available axis.
+        # Keep the first source on line 1 even if its block is unusually wide.
         line1_parts.append(tokens[next_index])
         next_index += 1
         if not text_fits_axis(fig, ax, compose(line1_parts, line_number=1)):
@@ -2352,16 +2366,16 @@ def build_info_lines(
         next_index += 1
 
     if next_index < len(tokens):
-        # Reserve room for the truncation indicator. Remove the last displayed
-        # source(s), if necessary, until ``[...]`` also fits cleanly.
+        # Reserve room for the final target and a truncation indicator so T
+        # stays visible even when intermediate source blocks cannot fit.
         while line2_parts and not text_fits_axis(
             fig,
             ax,
-            compose(line2_parts, line_number=2, truncated=True),
+            compose(line2_parts + ["[...]", tokens[-1]], line_number=2),
         ):
             line2_parts.pop()
 
-        line2 = compose(line2_parts, line_number=2, truncated=True)
+        line2 = compose(line2_parts + ["[...]", tokens[-1]], line_number=2)
     else:
         line2 = compose(line2_parts, line_number=2)
 
@@ -2441,7 +2455,7 @@ def make_finding_chart(
         SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame="icrs")
         for ra, dec in coords_deg
     ]
-    target = skycoords[0]
+    target = skycoords[-1]
     center_coord = SkyCoord(
         ra=ra_center * u.deg, dec=dec_center * u.deg, frame="icrs"
     )
@@ -2491,15 +2505,15 @@ def make_finding_chart(
         )
     add_compass(ax, wcs, center_coord, nx, ny, fov_arcmin)
 
-    # Show the move from the selected Gaia star, or s2, to T.
+    # Show the move from the selected Gaia star, or S, to T.
     offset_source = None
     offset_label = None
     if acquisition_coord is not None and acquisition_label is not None:
         offset_source = acquisition_coord
         offset_label = acquisition_label
     elif len(skycoords) >= 2:
-        offset_source = skycoords[1]
-        offset_label = "s2"
+        offset_source = skycoords[0]
+        offset_label = source_label(1, len(skycoords))
 
     if offset_source is not None and offset_label is not None:
         offset_text = source_to_target_offset_text(
@@ -2601,8 +2615,8 @@ Examples:
         metavar="RA DEC [RA2 DEC2 ...]",
         required=True,
         help=(
-            "One or more RA/Dec pairs. The first source is T; additional "
-            "sources are s2, s3, ... (maximum 10)."
+            "One or more RA/Dec pairs. The last source is T; preceding "
+            "sources are S, S2, S3, ... (maximum 10)."
         ),
     )
     basic.add_argument(
@@ -2881,7 +2895,7 @@ def main() -> int:
     # In faint-source mode a slit is the default marker for T, but any marker
     # explicitly supplied by the user takes precedence.
     if faint_selection is not None and args.marker is None:
-        markers[0] = "slit"
+        markers[-1] = "slit"
 
     image_path = Path(args.image).expanduser() if args.image is not None else None
     if image_path is not None:
@@ -2910,15 +2924,20 @@ def main() -> int:
     if args.vmin is not None and args.vmax is not None and args.vmin >= args.vmax:
         parser.error("--vmin must be smaller than --vmax.")
 
-    ra_main, dec_main = coords[0]
+    # The final pair is T for offsets, Gaia selection, and output naming.
+    ra_main, dec_main = coords[-1]
     target_coord = SkyCoord(
         ra=ra_main * u.deg, dec=dec_main * u.deg, frame="icrs"
     )
 
+    # Center a normal chart on the first pair, which is S when T follows it.
+    center_ra, center_dec = coords[0]
     gaia_candidates: list[GaiaCandidate] = []
     selected_gaia: GaiaCandidate | None = None
     acquisition_label: str | None = None
-    center_coord = target_coord
+    center_coord = SkyCoord(
+        ra=center_ra * u.deg, dec=center_dec * u.deg, frame="icrs"
+    )
     automatic_pa: float | None = None
 
     if faint_selection is not None:
@@ -2957,6 +2976,7 @@ def main() -> int:
 
         selected_gaia = gaia_candidates[faint_selection.rank - 1]
         acquisition_label = f"G{faint_selection.rank}"
+        # In faint mode the selected Gaia star takes the center from S or T.
         center_coord = selected_gaia.coord
 
         # Use the selected acquisition star -> target direction so T lies along
@@ -2998,7 +3018,7 @@ def main() -> int:
                 file=sys.stderr,
             )
         if (
-            markers[0] == "slit"
+            markers[-1] == "slit"
             and selected_gaia.separation_arcsec > 0.5 * args.slit_length
         ):
             print(
@@ -3038,9 +3058,10 @@ def main() -> int:
     if image_path is not None and output.resolve() == image_path.resolve():
         parser.error("Chart output must differ from the input FITS image")
 
-    print(f"Main target: RA={ra_main:.8f} deg  Dec={dec_main:+.8f} deg")
-    for idx, (ra, dec) in enumerate(coords[1:], start=2):
-        print(f"  s{idx}: RA={ra:.8f} deg  Dec={dec:+.8f} deg")
+    # List coordinates in input order with the shared source labels.
+    for idx, (ra, dec) in enumerate(coords[:-1], start=1):
+        print(f"  {source_label(idx, len(coords))}: RA={ra:.8f} deg  Dec={dec:+.8f} deg")
+    print(f"Main target T: RA={ra_main:.8f} deg  Dec={dec_main:+.8f} deg")
 
     if selected_gaia is not None and acquisition_label is not None:
         print(
