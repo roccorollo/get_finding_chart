@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.2.0
+
+- Default faint-source Gaia proper-motion propagation to the current UTC date and time instead of the fixed epoch 2026.0.
+- Add `--date YYYY-MM-DD` for an observing date at midnight UTC. Retain `--epoch YEAR` as an explicit override; the two options are mutually exclusive.
+- Report the observing position date and epoch. Treat entered target coordinates as positions for that date without modifying them; preserve the ICRS reference frame and existing acquisition calculations.
+
 ## 5.1.2
 
 - Verify MAST Gaia results flagged `OVERFLOW` against a separate `COUNT(*)` query using identical cone and magnitude conditions. Accept results only when the counts match, working around potentially spurious MAST flags while rejecting incomplete results.

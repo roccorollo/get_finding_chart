@@ -15,7 +15,7 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "5.1.2"
+__version__ = "5.2.0"
 
 import argparse
 import csv
@@ -42,6 +42,7 @@ from astropy.coordinates import Angle, Latitude, Longitude, SkyCoord
 from astropy.io import fits
 from astropy.io.votable import parse_single_table
 from astropy.stats import sigma_clipped_stats
+from astropy.time import Time
 from astropy.visualization import (
     AsinhStretch,
     ImageNormalize,
@@ -117,7 +118,6 @@ MAST_GAIA_TAP_SYNC_URL = "https://mast.stsci.edu/vo-tap/api/v0.1/gaiadr3/sync"
 MAST_GAIA_DR3_TABLE = "dbo.gaia_source"
 GAIA_SEARCH_RADIUS_ARCSEC = 90.0
 DEFAULT_GAIA_RP_MAX = 19.0
-DEFAULT_GAIA_EPOCH = 2026.0
 MAX_GAIA_TERMINAL_SOURCES = 5
 
 # Native PS1/2MASS cutouts are preferred. If more than this fraction of the
@@ -552,12 +552,38 @@ def parse_faint_selection(values: list[str] | None) -> FaintSelection | None:
     return FaintSelection(rank, mag_min, mag_max)
 
 
+# Validate an explicit epoch while preserving the existing Julian-year override.
 def parse_epoch(value: float) -> float:
     """Validate a Julian-year epoch used for Gaia proper-motion propagation."""
     epoch = float(value)
     if not np.isfinite(epoch) or epoch <= 0.0:
         raise argparse.ArgumentTypeError("--epoch must be a positive Julian year.")
     return epoch
+
+
+# Resolve one observing epoch for Gaia propagation and all acquisition geometry.
+def resolve_gaia_epoch(epoch: float | None, observing_date: str | None) -> float:
+    """Use an explicit Julian year, a UTC calendar date, or the current UTC time."""
+    # Explicit controls are alternatives rather than competing date assumptions.
+    if epoch is not None and observing_date is not None:
+        raise argparse.ArgumentTypeError("--epoch and --date cannot be used together.")
+    if epoch is not None:
+        return parse_epoch(epoch)
+
+    # Calendar dates refer to midnight UTC; reject ambiguous or invalid dates.
+    if observing_date is not None:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", observing_date):
+            raise argparse.ArgumentTypeError("--date must be a valid UTC date: YYYY-MM-DD.")
+        try:
+            instant = Time(observing_date, format="iso", scale="utc")
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(
+                "--date must be a valid UTC date: YYYY-MM-DD."
+            ) from exc
+        return parse_epoch(instant.jyear)
+
+    # Resolve now at invocation time, rather than freezing an epoch at import.
+    return float(Time.now().utc.jyear)
 
 
 # -----------------------------------------------------------------------------
@@ -691,11 +717,12 @@ def _format_gaia_mag(value: float | None) -> str:
     return "--" if value is None else f"{value:.2f}"
 
 
+# Report the position epoch with enough precision to identify the observing date.
 def format_epoch_value(epoch: float) -> str:
     """Format a Julian year compactly while retaining useful precision."""
     if abs(epoch - round(epoch)) < 1.0e-9:
         return f"{epoch:.1f}"
-    return f"{epoch:.3f}".rstrip("0").rstrip(".")
+    return f"{epoch:.6f}".rstrip("0").rstrip(".")
 
 
 def propagate_gaia_position(
@@ -955,7 +982,7 @@ AND {mag_clause}
         separation_arcsec = float(target.separation(coord).arcsec)
 
         # The TAP cone is defined at the Gaia catalog epoch. Re-apply the
-        # requested 90-arcsec limit after propagating positions to --epoch.
+        # requested 90-arcsec limit after propagating to the observing epoch.
         if separation_arcsec > GAIA_SEARCH_RADIUS_ARCSEC:
             continue
 
@@ -2725,7 +2752,7 @@ Examples:
            -f 5 --color red orange --marker-size 1.2 0.8
   %(prog)s -c 17:05:35.520 -23:27:21.60 -f 5 -s legacy --fits field.fits
   %(prog)s -c 17:05:35.520 -23:27:21.60 --faint
-  %(prog)s -c 17:05:35.520 -23:27:21.60 -F 2 14 18 --epoch 2026.5
+  %(prog)s -c 17:05:35.520 -23:27:21.60 -F 2 14 18 --date YYYY-MM-DD
         """,
     )
 
@@ -2813,14 +2840,26 @@ Examples:
             "--angle is supplied."
         ),
     )
-    geometry.add_argument(
+    # Offer one optional observing-date control, defaulting to the current time.
+    observing_time = geometry.add_mutually_exclusive_group()
+    observing_time.add_argument(
         "--epoch",
         type=float,
-        default=DEFAULT_GAIA_EPOCH,
+        default=None,
         metavar="YEAR",
         help=(
-            "Julian year for Gaia proper-motion propagation in faint-source mode "
-            f"(default: {DEFAULT_GAIA_EPOCH:.1f})."
+            "Julian year for Gaia proper-motion propagation in faint-source mode. "
+            "Default: current UTC time. Input target coordinates are assumed to "
+            "apply at this epoch and remain unchanged. Mutually exclusive with --date."
+        ),
+    )
+    observing_time.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help=(
+            "Observing date for Gaia proper-motion propagation (midnight UTC). "
+            "Input target coordinates must apply to that date and remain unchanged. "
+            "Default: current UTC time. Mutually exclusive with --epoch."
         ),
     )
     geometry.add_argument(
@@ -3006,7 +3045,7 @@ def main() -> int:
         coords = parse_coordinates(args.coordinates)
         fov_arcmin = parse_fov(args.fov)
         faint_selection = parse_faint_selection(args.faint)
-        epoch = parse_epoch(args.epoch)
+        epoch = resolve_gaia_epoch(args.epoch, args.date)
         markers = resolve_markers(args.marker, len(coords))
         colors = resolve_colors(args.color, len(coords))
         marker_sizes = resolve_marker_sizes(args.marker_size, len(coords))
@@ -3062,6 +3101,12 @@ def main() -> int:
     automatic_pa: float | None = None
 
     if faint_selection is not None:
+        # Make the position date explicit without changing the ICRS reference frame.
+        print(
+            f"Gaia position date (UTC): {Time(epoch, format='jyear', scale='utc').iso}; "
+            f"epoch={format_epoch_value(epoch)}."
+        )
+        print("Input target coordinates are used unchanged for this position date.")
         try:
             gaia_candidates = query_gaia_candidates(
                 target_coord, faint_selection, epoch

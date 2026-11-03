@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+from astropy.time import Time
 
 import get_finding_chart as chart
 
@@ -44,8 +45,34 @@ class SourceOrderTests(unittest.TestCase):
         self.assertEqual(observed["markers"][-1], "slit")
         self.assertIn("PA(S->T)=", output)
 
+    # Resolve the default once per invocation and preserve supplied target positions.
+    def test_faint_default_uses_current_time(self):
+        instant = Time("2028-03-04T12:34:56", scale="utc")
+        with patch.object(chart.Time, "now", return_value=instant):
+            observed, output = self.run_chart(faint=True)
+        self.assertAlmostEqual(observed["gaia_epoch"], instant.jyear, places=10)
+        self.assertEqual(observed["gaia_target"], (150.004, 20.004))
+        self.assertEqual(observed["coords"][-1], (150.004, 20.004))
+        self.assertIn("2028-03-04 12:34:56", output)
+        self.assertIn("Input target coordinates are used unchanged", output)
+
+    # Both explicit date controls reach the common Gaia calculations unchanged.
+    def test_faint_observing_date_and_epoch(self):
+        cases = [
+            (["--date", "2028-02-29"], Time("2028-02-29", scale="utc").jyear),
+            (["--epoch", "2027.5"], 2027.5),
+        ]
+        for args, expected in cases:
+            with self.subTest(args=args), patch.object(
+                chart.Time, "now", side_effect=AssertionError("explicit date must not read clock")
+            ):
+                observed, _ = self.run_chart(faint=True, extra_args=args)
+                self.assertAlmostEqual(observed["gaia_epoch"], expected, places=10)
+                self.assertEqual(observed["gaia_target"], (150.004, 20.004))
+                self.assertEqual(observed["coords"][-1], (150.004, 20.004))
+
     # Run the CLI with local substitutes for survey and Gaia services.
-    def run_chart(self, *, faint):
+    def run_chart(self, *, faint, extra_args=()):
         observed = {}
         target = SkyCoord(150.004, 20.004, unit=u.deg)
         star = SkyCoord(150.0041, 20.0041, unit=u.deg)
@@ -69,6 +96,7 @@ class SourceOrderTests(unittest.TestCase):
         # Ensure faint acquisition queries the final target T.
         def query(coord, selection, epoch):
             observed["gaia_target"] = (coord.ra.deg, coord.dec.deg)
+            observed["gaia_epoch"] = epoch
             return [candidate]
 
         with tempfile.TemporaryDirectory() as directory:
@@ -79,6 +107,7 @@ class SourceOrderTests(unittest.TestCase):
             ]
             if faint:
                 argv.append("--faint")
+            argv.extend(extra_args)
             output = io.StringIO()
             with patch.object(sys, "argv", argv), patch.object(
                 chart, "retrieve_image", side_effect=retrieve

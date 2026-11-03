@@ -6,7 +6,7 @@ Command-line Python tool for downloading public survey images and creating annot
   <img src="images/fc_example_g1T.png" alt="Example astronomical finding chart with option -F" width="600">
 </p>
 
-Current release: **v5.1.2**.
+Current release: **v5.2.0**.
 
 ## Author
 
@@ -36,13 +36,13 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
   - queries ESA first, automatically trying MAST/STScI Gaia DR3 if the request fails or the response is invalid;
   - searches within **90 arcsec** of T;
   - default selection `G_RP < 19`;
-  - Gaia positions propagated to epoch **2026.0** by default;
+  - Gaia positions propagated to the **current UTC date and time** by default;
   - selected Gaia star becomes the chart center;
   - T defaults to a slit marker unless explicitly overridden;
   - automatic PA aligns the selected Gaia acquisition star with T;
   - `--faint N` selects the Nth closest suitable star;
   - optional custom `G_RP` range with `--faint MAG_MIN MAG_MAX` or `--faint N MAG_MIN MAG_MAX`;
-  - `--epoch YEAR` changes the proper-motion epoch;
+  - `--date YYYY-MM-DD` selects an observing date (midnight UTC), or `--epoch YEAR` sets an explicit Julian year;
   - terminal output lists up to the five closest Gaia candidates, plus the selected star when needed;
   - only the selected acquisition star is plotted, with a `GN -> T` offset box.
 - Intensity scaling with `auto`, `zscale`, or percentile limits and `asinh`, linear, square-root, or logarithmic stretches. Auto scaling roughly keeps the sky background light.
@@ -209,7 +209,7 @@ Default behavior:
 
 - search Gaia DR3 within 90 arcsec of T;
 - require `G_RP < 19`;
-- propagate positions to epoch 2026.0;
+- propagate Gaia positions to the current UTC date and time;
 - choose the closest suitable star as `G1`;
 - center the chart on that star;
 - align the automatic PA from the acquisition star toward T;
@@ -221,10 +221,15 @@ Useful variants:
 --faint 2
 --faint 14 18
 --faint 2 14 18
---epoch 2000
+--date YYYY-MM-DD
+--epoch YEAR
 ```
 
-These select G2, restrict the `G_RP` range, combine both, or change the propagation epoch. An explicit `--angle` overrides the automatic Gaia-star PA.
+These select G2, restrict the `G_RP` range, combine both, or set the observing date/epoch. Replace `YYYY-MM-DD` with a valid UTC calendar date or `YEAR` with a positive Julian year. `--date` and `--epoch` are mutually exclusive. An explicit `--angle` overrides the automatic Gaia-star PA.
+
+Supply target coordinates appropriate to the observing date. Entered coordinates are used unchanged; the tool does not infer the target's proper motion or update its position. Gaia stars are propagated to that same date before calculating their separations, offsets, and PA relative to the target. Missing Gaia proper motions leave the catalog position unchanged and are flagged in the terminal.
+
+The position epoch is separate from the coordinate reference frame: propagation retains ICRS and does not produce apparent or equinox-of-date coordinates. The terminal reports the chosen UTC position date and Julian year. The propagation uses angular proper motion only, without parallax or perspective acceleration.
 
 The program warns, but does not modify the request, if the chosen FOV or slit is too short to include both T and the acquisition star.
 
