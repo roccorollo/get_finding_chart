@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.1.1
+
+- Fall back from ESA to MAST/STScI Gaia DR3 on request failures or invalid responses, and report the successful backend or both failure reasons.
+- Parse Gaia CSV and VOTable responses using shared candidate processing, preserving source identifiers, masked values, proper-motion propagation, and selection rules. Reject VOTable error/overflow statuses; valid empty results do not trigger fallback.
+
 ## 5.1.0
 
 - Add `update_github.sh` to copy a packaged release into a fresh clone of an existing Git repository, commit changed release files, and push its current branch.

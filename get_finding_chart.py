@@ -15,7 +15,7 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "5.1.0"
+__version__ = "5.1.1"
 
 import argparse
 import csv
@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from io import BytesIO, StringIO
 from pathlib import Path
 from urllib.parse import urljoin
+from xml.etree import ElementTree
 
 import matplotlib
 
@@ -110,7 +111,10 @@ GAIA_TAP_SYNC_URL = "https://gea.esac.esa.int/tap-server/tap/sync"
 ESO_TAP_SYNC_URL = "https://archive.eso.org/tap_obs/sync"
 ESO_SODA_SYNC_URL = "https://dataportal.eso.org/dataPortal/soda/sync"
 
+# Query the same Gaia release in priority order, with each service's table name.
 GAIA_DR3_TABLE = "gaiadr3.gaia_source"
+MAST_GAIA_TAP_SYNC_URL = "https://mast.stsci.edu/vo-tap/api/v0.1/gaiadr3/sync"
+MAST_GAIA_DR3_TABLE = "dbo.gaia_source"
 GAIA_SEARCH_RADIUS_ARCSEC = 90.0
 DEFAULT_GAIA_RP_MAX = 19.0
 DEFAULT_GAIA_EPOCH = 2026.0
@@ -736,12 +740,59 @@ def propagate_gaia_position(
     return propagated.icrs, True
 
 
+# Decode both TAP formats into rows consumed by the existing Gaia selection.
+def parse_gaia_response(response: requests.Response) -> list[dict]:
+    """Validate a TAP CSV or VOTable response without rounding source IDs."""
+    # Inspect the body because MAST can return XML even when CSV is requested.
+    try:
+        if response.content.lstrip().startswith(b"<"):
+            root = ElementTree.fromstring(response.content)
+            for info in root.iter():
+                if (
+                    info.tag.rsplit("}", 1)[-1] == "INFO"
+                    and info.get("name", "").upper() == "QUERY_STATUS"
+                ):
+                    status = info.get("value", "").upper()
+                    if status != "OK":
+                        raise ValueError(f"TAP QUERY_STATUS={status}: {info.text or ''}")
+            # Use FIELD names rather than IDs, which differ among TAP services.
+            table = parse_single_table(BytesIO(response.content)).to_table(
+                use_names_over_ids=True
+            )
+            headers = table.colnames
+            rows = [dict(zip(headers, row)) for row in table]
+        else:
+            reader = csv.DictReader(StringIO(response.text), strict=True)
+            headers = reader.fieldnames or []
+            rows = list(reader)
+            if any(
+                None in row or any(value is None for value in row.values())
+                for row in rows
+            ):
+                raise ValueError("inconsistent CSV row length")
+
+        # Require the same essential fields for either serialization, even if empty.
+        normalized_headers = {str(name).strip().lower() for name in headers}
+        required_headers = {"source_id", "ra", "dec", "phot_rp_mean_mag"}
+        if not required_headers.issubset(normalized_headers):
+            raise ValueError("unexpected Gaia columns: " + ", ".join(sorted(normalized_headers)))
+        return rows
+    except Exception as exc:
+        preview = response.text[:300].replace("\n", " ")
+        raise RuntimeError(
+            f"Gaia DR3 TAP returned an unreadable response ({exc}). "
+            f"Response begins: {preview!r}"
+        ) from exc
+
+
+# Query available Gaia mirrors, then reuse the common astrometry and ordering.
 def query_gaia_candidates(
     target: SkyCoord,
     selection: FaintSelection,
     epoch: float,
 ) -> list[GaiaCandidate]:
     """Query Gaia DR3 and return magnitude-selected stars sorted by separation."""
+    # Build one cone and magnitude predicate shared by both Gaia services.
     radius_deg = GAIA_SEARCH_RADIUS_ARCSEC / 3600.0
     mag_clause = f"phot_rp_mean_mag < {selection.mag_max:.8f}"
     if selection.mag_min is not None:
@@ -750,7 +801,7 @@ def query_gaia_candidates(
     query = f"""
 SELECT source_id, ra, dec, pmra, pmdec, ref_epoch,
        phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag
-FROM {GAIA_DR3_TABLE}
+FROM {{table}}
 WHERE 1 = CONTAINS(
     POINT('ICRS', ra, dec),
     CIRCLE('ICRS', {target.ra.deg:.10f}, {target.dec.deg:.10f}, {radius_deg:.10f})
@@ -758,6 +809,7 @@ WHERE 1 = CONTAINS(
 AND {mag_clause}
 """
 
+    # Report the requested selection before attempting the prioritized services.
     print(
         "Querying Gaia DR3 around T: "
         f"radius={GAIA_SEARCH_RADIUS_ARCSEC:g} arcsec, G_RP selection="
@@ -767,49 +819,43 @@ AND {mag_clause}
             else f"G_RP<{selection.mag_max:g}"
         )
     )
-    try:
-        response = requests.post(
-            GAIA_TAP_SYNC_URL,
-            data={
-                "REQUEST": "doQuery",
-                "LANG": "ADQL",
-                # CSV keeps the TAP column names explicit and avoids relying on
-                # VOTable FIELD IDs, which can vary between TAP responses.
-                "FORMAT": "csv",
-                "MAXREC": "2000",
-                "QUERY": query,
-            },
-            timeout=DEFAULT_TIMEOUT,
-        )
-        response.raise_for_status()
-    except requests.Timeout as exc:
-        raise RuntimeError(
-            f"Gaia DR3 TAP query timed out after {DEFAULT_TIMEOUT} seconds."
-        ) from exc
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Gaia DR3 TAP query failed: {exc}") from exc
-
-    try:
-        reader = csv.DictReader(StringIO(response.text))
-        if not reader.fieldnames:
-            raise ValueError("missing CSV header")
-        normalized_headers = {
-            str(name).strip().lower() for name in reader.fieldnames if name is not None
-        }
-        required_headers = {"source_id", "ra", "dec", "phot_rp_mean_mag"}
-        if not required_headers.issubset(normalized_headers):
-            raise ValueError(
-                "unexpected Gaia CSV columns: "
-                + ", ".join(sorted(normalized_headers))
+    # Fall back only on failed requests or invalid responses; empty results are valid.
+    errors = []
+    services = (
+        ("ESA", GAIA_TAP_SYNC_URL, GAIA_DR3_TABLE, "csv"),
+        ("MAST/STScI", MAST_GAIA_TAP_SYNC_URL, MAST_GAIA_DR3_TABLE, "votable"),
+    )
+    for backend, url, table, output_format in services:
+        print(f"Querying Gaia DR3 using {backend}...")
+        try:
+            response = requests.post(
+                url,
+                data={
+                    "REQUEST": "doQuery",
+                    "LANG": "ADQL",
+                    "FORMAT": output_format,
+                    "MAXREC": "2000",
+                    "QUERY": query.format(table=table),
+                },
+                timeout=DEFAULT_TIMEOUT,
             )
-        rows = list(reader)
-    except Exception as exc:
-        preview = response.text[:300].replace("\n", " ")
-        raise RuntimeError(
-            "Gaia DR3 TAP returned an unreadable response. "
-            f"Response begins: {preview!r}"
-        ) from exc
+            response.raise_for_status()
+            rows = parse_gaia_response(response)
+        except (requests.RequestException, RuntimeError) as exc:
+            errors.append(f"{backend}: {exc}")
+            if backend == "ESA":
+                print(
+                    f"WARNING: ESA Gaia DR3 query failed ({exc}); "
+                    "trying MAST Gaia DR3 mirror.",
+                    file=sys.stderr,
+                )
+        else:
+            print(f"Gaia DR3 backend: {backend}")
+            break
+    else:
+        raise RuntimeError("Both Gaia DR3 services failed. " + " | ".join(errors))
 
+    # Convert either serialization through the same proper-motion and radius logic.
     candidates: list[GaiaCandidate] = []
     for raw_row in rows:
         # Normalize keys defensively because TAP services may vary the case of
@@ -841,6 +887,9 @@ AND {mag_clause}
         if separation_arcsec > GAIA_SEARCH_RADIUS_ARCSEC:
             continue
 
+        # A masked VOTable identifier cannot identify an acquisition star.
+        if np.ma.is_masked(row.get("source_id")):
+            continue
         source_raw = str(row.get("source_id", "")).strip()
         if not source_raw:
             continue

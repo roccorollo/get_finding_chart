@@ -6,7 +6,7 @@ Command-line Python tool for downloading public survey images and creating annot
   <img src="images/fc_example_g1T.png" alt="Example astronomical finding chart with option -F" width="600">
 </p>
 
-Current release: **v5.1.0**.
+Current release: **v5.1.1**.
 
 ## Author
 
@@ -33,6 +33,7 @@ Released under the **MIT License**. See [LICENSE](LICENSE).
 - Compact `S -> T` offset box in normal mode.
 - **Faint-source acquisition mode** using Gaia DR3:
   - `-F`, `--faint`, or `--faint-source`;
+  - queries ESA first, automatically trying MAST/STScI Gaia DR3 if the request fails or the response is invalid;
   - searches within **90 arcsec** of T;
   - default selection `G_RP < 19`;
   - Gaia positions propagated to epoch **2026.0** by default;
@@ -60,7 +61,7 @@ Install dependencies with:
 python3 -m pip install -r requirements.txt
 ```
 
-Survey downloads and faint-source Gaia queries require internet access. A local FITS chart without `--faint` works offline.
+Survey downloads and faint-source Gaia queries require internet access. Gaia queries use a 120-second timeout per request; falling back to MAST adds a second request. Valid empty results do not trigger fallback. The successful Gaia backend is printed in the terminal. A local FITS chart without `--faint` works offline.
 
 ## Installation
 
