@@ -15,7 +15,7 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "5.1.1"
+__version__ = "5.1.2"
 
 import argparse
 import csv
@@ -740,8 +740,18 @@ def propagate_gaia_position(
     return propagated.icrs, True
 
 
+# Distinguish a TAP truncation indicator from transport and parsing failures.
+class GaiaQueryOverflow(RuntimeError):
+    pass
+
+
 # Decode both TAP formats into rows consumed by the existing Gaia selection.
-def parse_gaia_response(response: requests.Response) -> list[dict]:
+def parse_gaia_response(
+    response: requests.Response,
+    *,
+    allow_overflow: bool = False,
+    required_headers: set[str] | None = None,
+) -> list[dict]:
     """Validate a TAP CSV or VOTable response without rounding source IDs."""
     # Inspect the body because MAST can return XML even when CSV is requested.
     try:
@@ -753,7 +763,10 @@ def parse_gaia_response(response: requests.Response) -> list[dict]:
                     and info.get("name", "").upper() == "QUERY_STATUS"
                 ):
                     status = info.get("value", "").upper()
-                    if status != "OK":
+                    if status == "OVERFLOW":
+                        if not allow_overflow:
+                            raise GaiaQueryOverflow("Gaia DR3 TAP QUERY_STATUS=OVERFLOW")
+                    elif status != "OK":
                         raise ValueError(f"TAP QUERY_STATUS={status}: {info.text or ''}")
             # Use FIELD names rather than IDs, which differ among TAP services.
             table = parse_single_table(BytesIO(response.content)).to_table(
@@ -773,16 +786,84 @@ def parse_gaia_response(response: requests.Response) -> list[dict]:
 
         # Require the same essential fields for either serialization, even if empty.
         normalized_headers = {str(name).strip().lower() for name in headers}
-        required_headers = {"source_id", "ra", "dec", "phot_rp_mean_mag"}
+        if required_headers is None:
+            required_headers = {"source_id", "ra", "dec", "phot_rp_mean_mag"}
         if not required_headers.issubset(normalized_headers):
             raise ValueError("unexpected Gaia columns: " + ", ".join(sorted(normalized_headers)))
         return rows
+    except GaiaQueryOverflow:
+        raise
     except Exception as exc:
         preview = response.text[:300].replace("\n", " ")
         raise RuntimeError(
             f"Gaia DR3 TAP returned an unreadable response ({exc}). "
             f"Response begins: {preview!r}"
         ) from exc
+
+
+# Verify potentially spurious MAST overflow flags against the full match count.
+def fetch_gaia_rows(
+    url: str,
+    query: str,
+    output_format: str,
+    *,
+    verify_overflow: bool = False,
+) -> list[dict]:
+    """Fetch Gaia rows; accept flagged MAST results only after a count check."""
+    # Share the request parameters and HTTP validation with the count query.
+    def request(query_text: str) -> requests.Response:
+        response = requests.post(
+            url,
+            data={
+                "REQUEST": "doQuery",
+                "LANG": "ADQL",
+                "FORMAT": output_format,
+                "MAXREC": "2000",
+                "QUERY": query_text,
+            },
+            timeout=DEFAULT_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response
+
+    # Keep strict status handling unless this backend permits count verification.
+    response = request(query)
+    try:
+        return parse_gaia_response(response)
+    except GaiaQueryOverflow:
+        if not verify_overflow:
+            raise
+
+    # MAST has reported false OVERFLOW flags; never accept one without evidence.
+    # See https://github.com/astropy/pyvo/issues/735 for the upstream report.
+    print("MAST reported OVERFLOW; checking the complete Gaia match count...")
+    rows = parse_gaia_response(response, allow_overflow=True)
+    count_query = "SELECT COUNT(*) AS match_count\n" + query[query.index("FROM "):]
+    count_rows = parse_gaia_response(
+        request(count_query), allow_overflow=True, required_headers={"match_count"}
+    )
+
+    # An aggregate with no GROUP BY must contain exactly one nonnegative integer.
+    if len(count_rows) != 1:
+        raise RuntimeError("Cannot verify Gaia OVERFLOW: expected one COUNT(*) row.")
+    count_row = {str(key).strip().lower(): value for key, value in count_rows[0].items()}
+    count_text = str(count_row["match_count"]).strip()
+    if not re.fullmatch(r"[0-9]+", count_text):
+        raise RuntimeError("Cannot verify Gaia OVERFLOW: invalid COUNT(*) value.")
+    expected_count = int(count_text)
+    if len(rows) != expected_count:
+        raise RuntimeError(
+            "Incomplete Gaia OVERFLOW result: "
+            f"received {len(rows)} rows but COUNT(*) reports {expected_count}."
+        )
+
+    # Matching counts establish completeness independently of the status flag.
+    print(
+        "WARNING: MAST flagged OVERFLOW, but the complete result was verified "
+        f"against COUNT(*) ({expected_count} rows).",
+        file=sys.stderr,
+    )
+    return rows
 
 
 # Query available Gaia mirrors, then reuse the common astrometry and ordering.
@@ -828,19 +909,10 @@ AND {mag_clause}
     for backend, url, table, output_format in services:
         print(f"Querying Gaia DR3 using {backend}...")
         try:
-            response = requests.post(
-                url,
-                data={
-                    "REQUEST": "doQuery",
-                    "LANG": "ADQL",
-                    "FORMAT": output_format,
-                    "MAXREC": "2000",
-                    "QUERY": query.format(table=table),
-                },
-                timeout=DEFAULT_TIMEOUT,
+            rows = fetch_gaia_rows(
+                url, query.format(table=table), output_format,
+                verify_overflow=(backend == "MAST/STScI"),
             )
-            response.raise_for_status()
-            rows = parse_gaia_response(response)
         except (requests.RequestException, RuntimeError) as exc:
             errors.append(f"{backend}: {exc}")
             if backend == "ESA":

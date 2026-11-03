@@ -6,7 +6,7 @@ Command-line Python tool for downloading public survey images and creating annot
   <img src="images/fc_example_g1T.png" alt="Example astronomical finding chart with option -F" width="600">
 </p>
 
-Current release: **v5.1.1**.
+Current release: **v5.1.2**.
 
 ## Author
 
@@ -61,7 +61,7 @@ Install dependencies with:
 python3 -m pip install -r requirements.txt
 ```
 
-Survey downloads and faint-source Gaia queries require internet access. Gaia queries use a 120-second timeout per request; falling back to MAST adds a second request. Valid empty results do not trigger fallback. The successful Gaia backend is printed in the terminal. A local FITS chart without `--faint` works offline.
+Survey downloads and faint-source Gaia queries require internet access. Gaia queries use a 120-second timeout per request; falling back to MAST adds a second request. If MAST flags a result as `OVERFLOW`, an additional query counts all matches using the same search conditions. The result is accepted only when its row count matches that total; incomplete or unverifiable results fail. Valid empty results do not trigger fallback. The successful Gaia backend is printed in the terminal. A local FITS chart without `--faint` works offline.
 
 ## Installation
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.1.2
+
+- Verify MAST Gaia results flagged `OVERFLOW` against a separate `COUNT(*)` query using identical cone and magnitude conditions. Accept results only when the counts match, working around potentially spurious MAST flags while rejecting incomplete results.
+- Keep ESA overflow fallback, TAP errors, and unsuccessful completeness checks fatal to the affected backend. Report successful MAST count verification in the terminal.
+
 ## 5.1.1
 
 - Fall back from ESA to MAST/STScI Gaia DR3 on request failures or invalid responses, and report the successful backend or both failure reasons.

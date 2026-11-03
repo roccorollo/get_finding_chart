@@ -34,7 +34,7 @@ def response(body, status=200):
 
 
 # Build realistic TABLEDATA with differing FIELD IDs and optional masked cells.
-def votable(empty=False, masked=False):
+def votable(empty=False, masked=False, overflow=False):
     table = Table(
         rows=[(SOURCE_ID, 150.001, 20., 100., -20., 2016., 18., 18.5, 17.5)],
         names=HEADER.strip().split(","),
@@ -49,7 +49,12 @@ def votable(empty=False, masked=False):
         field.ID = f"col{index}"
     output = io.BytesIO()
     writeto(document, output)
-    return output.getvalue()
+    result = output.getvalue()
+    if overflow:
+        result = result.replace(
+            b"</RESOURCE>", b'<INFO name="QUERY_STATUS" value="OVERFLOW"/></RESOURCE>'
+        )
+    return result
 
 
 # Verify service routing without changing the established acquisition calculation.
@@ -120,16 +125,74 @@ class GaiaFallbackTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Both Gaia DR3 services failed.*ESA:.*MAST/STScI:"):
             self.query([requests.Timeout("ESA timeout"), response("offline", 503)])
 
-    # Reject TAP errors or overflow even if accompanied by a syntactically valid table.
+    # TAP errors stay fatal, and unverified overflow stays rejected by the parser.
     def test_votable_query_status(self):
-        for status in ("ERROR", "OVERFLOW"):
-            xml = votable().replace(
-                b"</RESOURCE>",
-                f'<INFO name="QUERY_STATUS" value="{status}">incomplete</INFO></RESOURCE>'.encode(),
-            )
-            with self.subTest(status=status):
-                with self.assertRaisesRegex(RuntimeError, status):
-                    self.query([requests.Timeout(), response(xml)])
+        xml = votable().replace(
+            b"</RESOURCE>", b'<INFO name="QUERY_STATUS" value="ERROR">failed</INFO></RESOURCE>'
+        )
+        with self.assertRaisesRegex(RuntimeError, "QUERY_STATUS=ERROR"):
+            self.query([requests.Timeout(), response(xml)])
+        with self.assertRaises(chart.GaiaQueryOverflow):
+            chart.parse_gaia_response(response(votable(overflow=True)))
+
+    # Recover MAST's false flag only when an independent count confirms completeness.
+    def test_mast_false_overflow_verified_by_count(self):
+        candidates, post, output, warnings = self.query([
+            requests.Timeout(), response(votable(overflow=True)), response("match_count\n1\n")
+        ])
+        self.assertEqual(candidates[0].source_id, str(SOURCE_ID))
+        self.assertEqual(post.call_count, 3)
+        data_query = post.call_args_list[1].kwargs["data"]["QUERY"]
+        count_query = post.call_args_list[2].kwargs["data"]["QUERY"]
+        self.assertEqual(
+            count_query, "SELECT COUNT(*) AS match_count\n" + data_query[data_query.index("FROM "):]
+        )
+        self.assertIn("Gaia DR3 backend: MAST/STScI", output)
+        self.assertIn("complete result was verified", warnings)
+
+    # An empty flagged result is valid only when COUNT(*) is also zero.
+    def test_empty_overflow_verified_by_count(self):
+        candidates, post, _, _ = self.query([
+            requests.Timeout(), response(votable(empty=True, overflow=True)),
+            response("match_count\n0\n"),
+        ])
+        self.assertEqual(candidates, [])
+        self.assertEqual(post.call_count, 3)
+
+    # The single-row aggregate can itself carry the spurious MAST status flag.
+    def test_count_votable_with_false_overflow(self):
+        table = Table(rows=[(1,)], names=["match_count"])
+        output = io.BytesIO()
+        writeto(from_table(table), output)
+        xml = output.getvalue().replace(
+            b"</RESOURCE>", b'<INFO name="QUERY_STATUS" value="OVERFLOW"/></RESOURCE>'
+        )
+        candidates, _, _, _ = self.query([
+            requests.Timeout(), response(votable(overflow=True)), response(xml)
+        ])
+        self.assertEqual(len(candidates), 1)
+
+    # Real truncation and unsuccessful count verification must never select a star.
+    def test_overflow_verification_failures(self):
+        failures = [
+            response("match_count\n2\n"), response("match_count\n0\n"),
+            response("match_count\n-1\n"), response("match_count\n1.5\n"),
+            response("match_count\n\n"), response("match_count\n1\n1\n"),
+            response("wrong_column\n1\n"), requests.Timeout("count timed out"),
+            response("unavailable", 503), response("<VOTABLE>malformed"),
+        ]
+        for failure in failures:
+            with self.subTest(failure=str(failure)):
+                with self.assertRaisesRegex(RuntimeError, "Both Gaia DR3 services failed"):
+                    self.query([requests.Timeout(), response(votable(overflow=True)), failure])
+
+    # ESA overflow must trigger MAST without applying a MAST-specific workaround.
+    def test_esa_overflow_falls_back(self):
+        candidates, post, _, _ = self.query([
+            response(votable(overflow=True)), response(votable())
+        ])
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(post.call_count, 2)
 
     # Render a real chart from synthetic FITS after a simulated ESA outage.
     def test_local_faint_chart_with_mast_fallback(self):
