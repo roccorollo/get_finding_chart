@@ -15,7 +15,7 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "5.2.0"
+__version__ = "5.2.1"
 
 import argparse
 import csv
@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import dataclass
 from io import BytesIO, StringIO
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree
 
 import matplotlib
@@ -111,6 +111,15 @@ SKYMAPPER_MAX_CUTOUT_ARCMIN = 10.0
 GAIA_TAP_SYNC_URL = "https://gea.esac.esa.int/tap-server/tap/sync"
 ESO_TAP_SYNC_URL = "https://archive.eso.org/tap_obs/sync"
 ESO_SODA_SYNC_URL = "https://dataportal.eso.org/dataPortal/soda/sync"
+
+# Image alternatives preserve the requested survey release and band.
+NOIRLAB_SIA_URLS = {
+    "legacy": "https://datalab.noirlab.edu/sia/ls_dr10",
+    "des": "https://datalab.noirlab.edu/sia/des_dr2",
+    "sdss": "https://datalab.noirlab.edu/sia/sdss_dr9",
+}
+IRSA_SIA_URL = "https://irsa.ipac.caltech.edu/SIA"
+IRSA_2MASS_WAVELENGTHS = {"J": "1.25e-6", "H": "1.65e-6", "K": "2.2e-6"}
 
 # Query the same Gaia release in priority order, with each service's table name.
 GAIA_DR3_TABLE = "gaiadr3.gaia_source"
@@ -1424,6 +1433,207 @@ def get_hips2fits(
         result.close()
 
 
+# Normalize SIA metadata without turning masked cells into apparent values.
+def image_metadata_text(value) -> str:
+    """Return a stripped metadata string, including byte-string VOTable cells."""
+    # Empty and masked cells must not match filters or become download URLs.
+    if value is None or np.ma.is_masked(value):
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
+# Read image discovery tables independently of the Gaia catalog parser.
+def query_image_sia(url: str, params: dict[str, str]) -> list[dict[str, str]]:
+    """Query SIA and preserve FIELD names while rejecting service errors."""
+    # Use explicit timeouts and inspect VO error status even on HTTP success.
+    response = requests.get(url, params=params, timeout=DEFAULT_TIMEOUT)
+    response.raise_for_status()
+    try:
+        root = ElementTree.fromstring(response.content)
+        for info in root.iter():
+            if (
+                info.tag.rsplit("}", 1)[-1] == "INFO"
+                and info.get("name", "").upper() == "QUERY_STATUS"
+                and info.get("value", "").upper() != "OK"
+            ):
+                raise ValueError(f"{info.get('value')}: {info.text or ''}")
+        table = parse_single_table(BytesIO(response.content)).to_table(
+            use_names_over_ids=True
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Image SIA returned an invalid response: {exc}") from exc
+
+    # Both providers document access_url; band metadata is checked per provider.
+    rows = [
+        {name.strip().lower(): image_metadata_text(row[name]) for name in table.colnames}
+        for row in table
+    ]
+    if "access_url" not in {name.strip().lower() for name in table.colnames}:
+        raise RuntimeError("Image SIA response has no access_url column.")
+    return rows
+
+
+# Match named passbands exactly, accepting the descriptive suffixes used by SIA.
+def image_band_matches(value: str, band: str) -> bool:
+    """Recognize a filter token and the 2MASS K/Ks aliases."""
+    # Avoid substring matches such as an r filter matching an infrared label.
+    token = re.split(r"[\s()]+", value.strip().lower())[0].replace("_", "")
+    expected = band.lower().replace("_", "")
+    return token == expected or (expected == "k" and token == "ks")
+
+
+# Try overlapping native images and keep the best usable final-field coverage.
+def download_image_candidates(
+    urls: list[str],
+    output: Path,
+    ra: float,
+    dec: float,
+    final_fov_arcmin: float,
+    pixel_scale_arcsec: float,
+    display_pa: float,
+    backend: str,
+) -> None:
+    """Validate candidate FITS/WCS data and prefer complete chart coverage."""
+    # Stage each download so failed or unsuitable candidates cannot replace output.
+    errors = []
+    best_coverage = None
+    with tempfile.TemporaryDirectory(dir=output.parent, prefix=".image_candidates_") as folder:
+        candidate = Path(folder) / "candidate.fits"
+        best = Path(folder) / "best.fits"
+        for url in dict.fromkeys(urls):
+            try:
+                download_file(url, candidate)
+                coverage = assess_fits_coverage(
+                    candidate, ra, dec, final_fov_arcmin, pixel_scale_arcsec, display_pa
+                )
+                report_native_coverage(backend, coverage)
+                if coverage.acceptable:
+                    candidate.replace(output)
+                    return
+
+                # Preserve useful partial images, but require coverage at the center.
+                if (
+                    coverage.finite_fraction > 0
+                    and coverage.center_missing_fraction <= MAX_CENTER_MISSING_FRACTION
+                    and (best_coverage is None or coverage.finite_fraction > best_coverage.finite_fraction)
+                ):
+                    candidate.replace(best)
+                    best_coverage = coverage
+            except Exception as exc:
+                errors.append(str(exc))
+                print(f"WARNING: {backend} image failed; trying another product: {exc}", file=sys.stderr)
+
+        # Like existing native fallbacks, retain a partial field with a clear warning.
+        if best_coverage is not None:
+            print(
+                f"WARNING: {backend} has incomplete final-field coverage; "
+                "using the best overlapping image. Images are not mosaicked.",
+                file=sys.stderr,
+            )
+            best.replace(output)
+            return
+    raise RuntimeError(
+        f"{backend} returned no usable image covering the chart center. "
+        + ("Last error: " + errors[-1] if errors else "No matching image products.")
+    )
+
+
+# Retrieve native image alternatives through NOIRLab's survey-specific SIA services.
+def get_noirlab_image(
+    survey: str,
+    ra: float,
+    dec: float,
+    fov_arcmin: float,
+    band: str,
+    output: Path,
+    final_fov_arcmin: float,
+    pixel_scale_arcsec: float,
+    display_pa: float,
+) -> None:
+    """Discover same-release, same-band science image cutouts at NOIRLab."""
+    # SIA v1 longitude spans are coordinate widths, so account for declination.
+    size_deg = fov_arcmin / 60.0
+    ra_width = min(360.0, size_deg / max(abs(np.cos(np.deg2rad(dec))), 1.e-8))
+    print(f"Querying NOIRLab SIA: {survey}, band={band}")
+    rows = query_image_sia(NOIRLAB_SIA_URLS[survey], {
+        "POS": f"{ra:.10f},{dec:.10f}",
+        "SIZE": f"{ra_width:.10f},{size_deg:.10f}",
+        "FORMAT": "image/fits",
+        "VERB": "3",
+    })
+
+    # Exclude weights, masks, other bands, and individual exposures where identified.
+    urls = []
+    for row in rows:
+        if not image_band_matches(row.get("obs_bandpass", ""), band):
+            continue
+        product = row.get("prodtype") or row.get("dataproduct_type", "")
+        if product.lower() != "image":
+            continue
+        processing = row.get("proctype", "").lower()
+        if survey in {"legacy", "des"} and processing and processing not in {"stack", "coadd"}:
+            continue
+        url = row.get("access_url", "")
+        if urlsplit(url).scheme in {"http", "https"}:
+            urls.append(url)
+    download_image_candidates(
+        urls, output, ra, dec, final_fov_arcmin, pixel_scale_arcsec, display_pa,
+        f"NOIRLab ({SURVEYS[survey].label})",
+    )
+
+
+# Retrieve 2MASS All-Sky Atlas science images through IRSA's current SIA interface.
+def get_2mass_irsa(
+    ra: float,
+    dec: float,
+    fov_arcmin: float,
+    band: str,
+    output: Path,
+    final_fov_arcmin: float,
+    pixel_scale_arcsec: float,
+    display_pa: float,
+) -> None:
+    """Discover matching Atlas images and request angular IBE cutouts."""
+    # Restrict the collection and wavelength before filtering exact band metadata.
+    band = band.upper()
+    if band not in IRSA_2MASS_WAVELENGTHS:
+        raise ValueError("2MASS band must be one of: J H K")
+    radius_deg = fov_arcmin * np.sqrt(2.0) / 120.0
+    print(f"Querying IRSA 2MASS All-Sky Atlas: band={band}")
+    rows = query_image_sia(IRSA_SIA_URL, {
+        "POS": f"CIRCLE {ra:.10f} {dec:.10f} {radius_deg:.10f}",
+        "COLLECTION": "twomass_allsky",
+        "BAND": IRSA_2MASS_WAVELENGTHS[band],
+        "DPTYPE": "image",
+        "RESPONSEFORMAT": "votable",
+    })
+
+    # IBE cutouts preserve the parent-image WCS and can be clipped at image edges.
+    urls = []
+    for row in rows:
+        if not image_band_matches(row.get("energy_bandpassname", ""), band):
+            continue
+        url = urlsplit(row.get("access_url", ""))
+        if url.scheme not in {"http", "https"} or "/ibe/data/" not in url.path:
+            continue
+        if not re.search(r"\.fits(?:\.gz|\.fz)?$", url.path, re.IGNORECASE):
+            continue
+        params = dict(parse_qsl(url.query))
+        params.update({
+            "center": f"{ra:.10f},{dec:.10f}deg",
+            "size": f"{fov_arcmin:.10f}arcmin",
+            "gzip": "false",
+        })
+        urls.append(urlunsplit(url._replace(query=urlencode(params))))
+    download_image_candidates(
+        urls, output, ra, dec, final_fov_arcmin, pixel_scale_arcsec, display_pa,
+        "IRSA (2MASS All-Sky Atlas)",
+    )
+
+
+# Retrieve the preferred Pan-STARRS image before trying any alternate backend.
 def get_ps1_stsci(ra: float, dec: float, side: int, band: str, output: Path) -> None:
     """Retrieve a native Pan-STARRS1 FITS cutout from STScI."""
     band = band.lower()
@@ -1654,8 +1864,8 @@ def retrieve_image(
 
     Pan-STARRS1 and 2MASS prefer their previous backends and use HiPS2FITS
     only as a fallback. SDSS, GALEX, DES, VIKING, UHS, and AllWISE are retrieved
-    directly through CDS HiPS2FITS. VHS is retrieved from the ESO archive via
-    TAP discovery plus a SODA FITS cutout.
+    directly through CDS HiPS2FITS. DES, SDSS, and Legacy have NOIRLab image
+    alternatives; 2MASS also has IRSA after CDS. VHS uses ESO TAP plus SODA.
     """
     if survey == "ps1":
         band = band.lower()
@@ -1748,6 +1958,8 @@ def retrieve_image(
             get_hips2fits(
                 ra, dec, side, fov_arcmin, HIPS_2MASS[band], hips_candidate
             )
+            # Reject unreadable CDS output before considering the IRSA alternative.
+            read_fits_image(hips_candidate)
             hips_candidate.replace(output)
             return RetrievalInfo("CDS HiPS2FITS (2MASS)", True)
         except Exception as hips_exc:
@@ -1756,21 +1968,33 @@ def retrieve_image(
             except OSError:
                 pass
 
+            # IRSA is independent of SkyView and CDS and supplies Atlas FITS images.
+            print("WARNING: CDS 2MASS retrieval failed; trying IRSA.", file=sys.stderr)
+            try:
+                get_2mass_irsa(
+                    ra, dec, fov_arcmin, band, output, final_fov_arcmin,
+                    pixel_scale_arcsec, display_pa,
+                )
+                return RetrievalInfo("IRSA (2MASS All-Sky Atlas)")
+            except Exception as irsa_exc:
+                irsa_error = str(irsa_exc)
+                print(f"WARNING: IRSA 2MASS retrieval failed: {irsa_error}", file=sys.stderr)
+
             if output.exists() and native_error is None:
                 print(
-                    "WARNING: CDS HiPS2FITS fallback also failed. The finding "
+                    "WARNING: CDS and IRSA fallbacks failed. The finding "
                     "chart will use the incomplete SkyView 2MASS image. "
                     f"Reason: {hips_exc}",
                     file=sys.stderr,
                 )
                 return RetrievalInfo(
-                    "NASA SkyView (2MASS; incomplete; HiPS fallback failed)"
+                    "NASA SkyView (2MASS; incomplete; CDS and IRSA failed)"
                 )
 
             raise RuntimeError(
-                "2MASS retrieval failed with both NASA SkyView and CDS "
-                f"HiPS2FITS. SkyView error: {native_error}; "
-                f"HiPS2FITS error: {hips_exc}"
+                "2MASS retrieval failed with SkyView, CDS HiPS2FITS, and IRSA. "
+                f"SkyView error: {native_error}; HiPS2FITS error: {hips_exc}; "
+                f"IRSA error: {irsa_error}"
             ) from hips_exc
 
     if survey == "vhs":
@@ -1779,11 +2003,48 @@ def retrieve_image(
 
     if survey in HIPS_PRIMARY:
         _, hips_id = resolve_primary_hips_band(survey, band)
-        get_hips2fits(ra, dec, side, fov_arcmin, hips_id, output)
+        try:
+            get_hips2fits(ra, dec, side, fov_arcmin, hips_id, output)
+            if survey in {"des", "sdss"}:
+                read_fits_image(output)
+        except Exception as primary_exc:
+            if survey not in {"des", "sdss"}:
+                raise
+            print(f"WARNING: CDS {survey} retrieval failed; trying NOIRLab: {primary_exc}", file=sys.stderr)
+            try:
+                get_noirlab_image(
+                    survey, ra, dec, fov_arcmin, band, output, final_fov_arcmin,
+                    pixel_scale_arcsec, display_pa,
+                )
+            except Exception as alternate_exc:
+                raise RuntimeError(
+                    f"{survey} image retrieval failed. CDS: {primary_exc}; NOIRLab: {alternate_exc}"
+                ) from alternate_exc
+            return RetrievalInfo(f"NOIRLab SIA ({SURVEYS[survey].label})")
         return RetrievalInfo(f"CDS HiPS2FITS ({SURVEYS[survey].label})", True)
 
     if survey == "legacy":
-        get_legacy(ra, dec, side, band, output, legacy_layer)
+        try:
+            get_legacy(ra, dec, side, band, output, legacy_layer)
+            read_fits_image(output)
+        except Exception as primary_exc:
+            # Other layers can be models, residuals, or different releases.
+            if legacy_layer != "ls-dr10":
+                raise RuntimeError(
+                    f"Legacy retrieval failed: {primary_exc}. "
+                    "NOIRLab fallback supports only the ls-dr10 image layer."
+                ) from primary_exc
+            print(f"WARNING: Legacy retrieval failed; trying NOIRLab: {primary_exc}", file=sys.stderr)
+            try:
+                get_noirlab_image(
+                    survey, ra, dec, fov_arcmin, band, output, final_fov_arcmin,
+                    pixel_scale_arcsec, display_pa,
+                )
+            except Exception as alternate_exc:
+                raise RuntimeError(
+                    f"Legacy image retrieval failed. Legacy: {primary_exc}; NOIRLab: {alternate_exc}"
+                ) from alternate_exc
+            return RetrievalInfo("NOIRLab SIA (Legacy DR10)")
         return RetrievalInfo("DESI Legacy Survey cutout service")
     if survey == "skymapper":
         get_skymapper(ra, dec, fov_arcmin, band, output)

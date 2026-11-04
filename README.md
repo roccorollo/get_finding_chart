@@ -6,7 +6,7 @@ Command-line Python tool for downloading public survey images and creating annot
   <img src="images/fc_example_g1T.png" alt="Example astronomical finding chart with option -F" width="600">
 </p>
 
-Current release: **v5.2.0**.
+Current release: **v5.2.1**.
 
 ## Author
 
@@ -151,7 +151,25 @@ For UHS J-band charts, use `-s uhs` (optionally `-b J`).
 
 VHS defaults to J; use `-b K` to request Ks explicitly. The ESO archive must have an image in the selected band covering the field.
 
-Pan-STARRS1 and 2MASS prefer their standard backends and can fall back to CDS HiPS2FITS when coverage is inadequate. SDSS, GALEX, DES, VIKING, UHS, and AllWISE use CDS HiPS2FITS directly. UHS currently provides J-band imaging only and covers part of the northern sky. VHS is retrieved from the ESO Science Archive via TAP + SODA.
+Image retrieval uses the following service order. Gaia catalog queries in `--faint` mode are separate from image downloads.
+
+| Survey | Preferred image service | Automatic image alternatives |
+|---|---|---|
+| Pan-STARRS1 | STScI | CDS HiPS2FITS |
+| 2MASS | NASA SkyView | CDS HiPS2FITS, then IRSA All-Sky Atlas |
+| Legacy DR10 | Legacy Survey viewer | NOIRLab Data Lab SIA (`ls_dr10`) |
+| DES DR2 | CDS HiPS2FITS | NOIRLab Data Lab SIA (`des_dr2`) |
+| SDSS DR9 | CDS HiPS2FITS | NOIRLab Data Lab SIA (`sdss_dr9`) |
+| GALEX, VIKING, UHS, AllWISE | CDS HiPS2FITS | None |
+| DSS2 | NASA SkyView | None |
+| SkyMapper DR4 | SkyMapper SIAP | None |
+| VHS | ESO TAP + SODA | Other overlapping products at ESO |
+
+Pan-STARRS1 and 2MASS also try CDS when the preferred image has inadequate coverage. Legacy, DES, and SDSS use NOIRLab after request failures or unreadable FITS output. The Legacy alternative applies only to the default `ls-dr10` science-image layer; models, residuals, and other release layers are not substituted. NOIRLab coverage can differ from the preferred service.
+
+NOIRLab and IRSA alternatives select the requested band, validate celestial FITS/WCS data, and try overlapping products for final-field coverage. They do not mosaic separate images. If no complete image is available, a usable partial image covering the chart center can be returned with an explicit warning. Native NOIRLab and IRSA images may be retained with `--fits`; the existing restriction on retaining HiPS2FITS products still applies.
+
+UHS currently provides J-band imaging only and covers part of the northern sky. VHS is retrieved from the ESO Science Archive via TAP + SODA.
 
 ## Markers, colors, and slit
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.2.1
+
+- Add automatic NOIRLab Data Lab SIA image alternatives for Legacy DR10, DES DR2, and SDSS DR9 after preferred-service failures or unreadable FITS responses. Preserve custom Legacy layer semantics.
+- Add IRSA 2MASS All-Sky Atlas image retrieval after the existing SkyView and CDS paths fail.
+- Share image metadata parsing and candidate validation across the new alternatives, preserving band selection and checking final-field coverage. Prefer complete fields; warn when only a usable partial native image is available. Keep Gaia catalog retrieval separate.
+
 ## 5.2.0
 
 - Default faint-source Gaia proper-motion propagation to the current UTC date and time instead of the fixed epoch 2026.0.
