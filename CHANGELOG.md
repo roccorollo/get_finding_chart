@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.2.2
+
+- Keep `update_github.sh` only in the project root; exclude it from release folders and ZIP archives.
+
+- Restrict `update_github.sh` publication to `get_finding_chart.py`, README, LICENSE, CHANGELOG, requirements, and the complete `images` folder. Do not copy or stage the updater or tests, and do not require tests in the release being published.
+
 ## 5.2.1
 
 - Add automatic NOIRLab Data Lab SIA image alternatives for Legacy DR10, DES DR2, and SDSS DR9 after preferred-service failures or unreadable FITS responses. Preserve custom Legacy layer semantics.

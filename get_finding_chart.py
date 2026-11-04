@@ -15,7 +15,7 @@ from __future__ import annotations
 __author__ = "Andrea Rossi"
 __credits__ = "Development assistance: OpenAI ChatGPT"
 __license__ = "MIT"
-__version__ = "5.2.1"
+__version__ = "5.2.2"
 
 import argparse
 import csv

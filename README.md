@@ -6,7 +6,7 @@ Command-line Python tool for downloading public survey images and creating annot
   <img src="images/fc_example_g1T.png" alt="Example astronomical finding chart with option -F" width="600">
 </p>
 
-Current release: **v5.2.1**.
+Current release: **v5.2.2**.
 
 ## Author
 
